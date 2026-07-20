@@ -144,13 +144,15 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
     const isPlaza = c.name === spawn
     const template = templateOf.get(c.name)!
     // secret home channels report no count — don't shrink the main hall for it
-    const sizeCount = unlisted.has(c.name) ? 5 : c.count
+    const sizeCount = unlisted.has(c.name) ? 6 : isPlaza ? Math.max(c.count, 6) : c.count
     const width = Math.min(44, 18 + sizeCount * 4)
     const height = Math.min(26, 12 + sizeCount * 2)
     const exits: RoomManifest['exits'] = []
     if (isPlaza) {
-      // the portal station: ranked arches along the north wall (spec §7.5)
-      for (const target of sorted.slice(1, 9).map((s) => s.name)) {
+      // the portal station: ranked arches along the north wall (spec §7.5) —
+      // only as many as the wall can carry without labels colliding
+      const arches = Math.max(2, Math.min(6, Math.floor((width - 6) / 7)))
+      for (const target of sorted.slice(1, 1 + arches).map((s) => s.name)) {
         exits.push({ direction: 'north', channel: target, label: doorLabel(target) })
       }
     } else {

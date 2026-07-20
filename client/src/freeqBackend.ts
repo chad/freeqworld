@@ -22,6 +22,8 @@ export interface BackendOptions {
   onOpen?: (rttMs: number) => void
   onClose?: () => void
   onAuth?: (did: string) => void
+  /** a real IRC direct message arrived (peer nick, text, timestamp) */
+  onDm?: (fromNick: string, text: string, ts: number) => void
 }
 
 interface TrackedMember {
@@ -137,7 +139,13 @@ export class FreeqBackend {
       }
     })
     this.client.on('message', (channel: string, msg) => {
-      if (channel !== this.channel || msg.isSystem || !msg.text) return
+      if (msg.isSystem || !msg.text) return
+      // DM threads are keyed by peer DID/nick, never '#…' — route to the DM handler
+      if (!channel.startsWith('#') && !channel.startsWith('&')) {
+        if (!msg.isSelf && channel !== 'server') this.opts.onDm?.(msg.from, msg.text, msg.timestamp?.getTime?.() ?? Date.now())
+        return
+      }
+      if (channel !== this.channel) return
       if (this.joinPending) return // history will cover it
       this.emit({ t: 'event', channel, durable: { kind: 'message', event: this.toChatMessage(channel, msg) } })
     })
@@ -270,6 +278,7 @@ export class FreeqBackend {
       verification_status: did.startsWith('did:key:') || did.startsWith('did:plc:') ? 'verified' : 'unverified',
       is_agent: m.actorClass === 'agent' || m.actorClass === 'external_agent',
       avatar_did: isSelf ? this.opts.avatarDid : undefined,
+      nick,
     }
   }
 
@@ -371,6 +380,11 @@ export class FreeqBackend {
   acceptPolicy(channel: string): void {
     this.client.raw(`POLICY ${channel} ACCEPT`)
     window.setTimeout(() => this.beginJoin(channel, false), 300)
+  }
+
+  /** Real IRC direct message (PRIVMSG to a nick) — works with any client on the server. */
+  sendDm(nick: string, text: string): void {
+    this.client.sendMessage(nick, text)
   }
 
   sendMessage(channel: string, content: string): void {

@@ -132,6 +132,8 @@ export interface MemberInfo {
   is_agent: boolean
   /** when a linked identity (e.g. a Bluesky did:plc) anchors the avatar (spec §8.2) */
   avatar_did?: string
+  /** wire nick on IRC-backed servers — the DM address */
+  nick?: string
   appearance_form?: string
   agent_chain?: string[]
   capabilities?: string[]

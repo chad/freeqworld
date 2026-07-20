@@ -84,6 +84,8 @@ export class App {
   private rtt = 0
   private pendingTravel: { server: string; url: string } | null = null
   private travelUrl: string | null = null
+  private dmThreads = new Map<string, { from: string; text: string; self: boolean; ts: number }[]>()
+  private activeDm: string | null = null
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
   private spriteSets = new Map<string, SpriteSet>()
@@ -175,6 +177,7 @@ export class App {
           this.toast(`◈ DID authenticated with the server: ${shortDid(did)}`)
           this.updateInspectorMeta()
         },
+        onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
       })
     } else {
       this.conn = new TownConnection({ ...common, serverUrl: this.townUrl() })
@@ -489,6 +492,19 @@ export class App {
       agentRow.classList.add('hidden')
       capsRow.classList.add('hidden')
     }
+    // private encounter: DM button when the backend supports it (spec §6.5)
+    const dmBtn = el('idcard-dm')
+    const nick = m?.nick ?? m?.display_name
+    const canDm = Boolean(nick && this.conn && 'sendDm' in this.conn && did !== this.identity?.did)
+    dmBtn.classList.toggle('hidden', !canDm)
+    if (canDm) {
+      const fresh = dmBtn.cloneNode(true) as HTMLElement
+      dmBtn.replaceWith(fresh)
+      fresh.addEventListener('click', () => {
+        el('idcard').classList.add('hidden')
+        this.openDm(nick!)
+      })
+    }
     el('idcard').classList.remove('hidden')
     await drawPreview(m?.avatar_did ?? did, el<HTMLCanvasElement>('idcard-avatar'))
   }
@@ -569,6 +585,12 @@ export class App {
     })
     el('travel-go').addEventListener('click', () => this.confirmTravel())
     el('gate-later').addEventListener('click', () => el('gate').classList.add('hidden'))
+    el('dm-close').addEventListener('click', () => el('dmpanel').classList.add('hidden'))
+    el<HTMLInputElement>('dm-input').addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') this.sendDm()
+      if (e.key === 'Escape') el('dmpanel').classList.add('hidden')
+    })
     el('send-btn').addEventListener('click', () => void this.sendCurrentMessage())
     el<HTMLInputElement>('msg-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') void this.sendCurrentMessage()
@@ -661,6 +683,25 @@ export class App {
   }
 
   private interact(): void {
+    // people first: walking up to someone and pressing Space is the social gesture
+    let nearest: { did: string; dist: number } | null = null
+    for (const [did, r] of this.remotes) {
+      const dist = Math.hypot(r.x - this.me.x, r.y - this.me.y)
+      if (dist < 2.2 && (!nearest || dist < nearest.dist)) nearest = { did, dist }
+    }
+    if (!nearest) {
+      for (const m of this.members.values()) {
+        if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+        const spot = this.parkedSpot(m.did)
+        if (!spot) continue
+        const dist = Math.hypot(spot.x - this.me.x, spot.y - this.me.y)
+        if (dist < 2.2 && (!nearest || dist < nearest.dist)) nearest = { did: m.did, dist }
+      }
+    }
+    if (nearest) {
+      void this.showIdentityCard(nearest.did)
+      return
+    }
     const room = this.rooms.get(this.channel)
     if (!room) return
     for (const o of room.objects) {
@@ -970,15 +1011,24 @@ export class App {
       }
     }
 
-    // door labels
-    ctx.fillStyle = '#8a8896'
-    for (const d of this.map.doors) {
+    // door labels: staggered rows so a portal wall stays readable; the full
+    // label (with live count) appears when you approach the door
+    this.map.doors.forEach((d, i) => {
       const sx = d.x * TILE_PX - cam.x
       const sy = d.y * TILE_PX - cam.y
-      if (sx < 0 || sy < 0 || sx > VIEW_W || sy > VIEW_H) continue
-      const label = d.remote_server ? `⇗ ${d.label}` : d.label
-      ctx.fillText(label, sx - label.length * 1.6, sy + (d.direction === 'north' ? 14 : d.direction === 'south' ? -6 : 10))
-    }
+      if (sx < -40 || sy < -20 || sx > VIEW_W + 40 || sy > VIEW_H + 20) return
+      const near = Math.hypot(d.x + 0.5 - this.me.x, d.y + 0.5 - this.me.y) < 3.5
+      let label = d.remote_server ? `⇗ ${d.label}` : d.label
+      if (!near) {
+        const bare = label.replace(/\s*\(\d+\)$/, '')
+        label = bare.length > 9 ? `${bare.slice(0, 8)}…` : bare
+      }
+      ctx.fillStyle = near ? '#ffd166' : '#8a8896'
+      const stagger = d.direction === 'north' || d.direction === 'south' ? (i % 2) * 8 : 0
+      const ly = d.direction === 'north' ? sy + 14 + stagger : d.direction === 'south' ? sy - 6 - stagger : sy + 10
+      ctx.fillText(label, Math.round(sx - label.length * 1.6), Math.round(ly))
+      if (near) ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + 8))
+    })
 
     // remote players, parked members, then me (draw order by y)
     const drawables: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean; parked?: boolean }[] = []
@@ -1086,6 +1136,54 @@ export class App {
     ctx.fillRect(x, y, w, h)
     ctx.fillStyle = b.kind === 'sealed' ? '#9a98b0' : b.kind === 'code' ? '#2a6a4a' : '#1a1a24'
     b.lines.forEach((line, i) => ctx.fillText(line, x + 4, y + 8 + i * 8))
+  }
+
+  // ---------- direct messages (real IRC PRIVMSGs, spec §6.5 private encounters) ----------
+
+  private onDmIn(fromNick: string, text: string, ts: number): void {
+    const key = fromNick.toLowerCase()
+    const thread = this.dmThreads.get(key) ?? []
+    thread.push({ from: fromNick, text, self: false, ts })
+    this.dmThreads.set(key, thread)
+    this.audio.stinger('mention')
+    if (this.activeDm !== key || el('dmpanel').classList.contains('hidden')) {
+      this.toast(`💬 ${fromNick}: ${text.slice(0, 60)}`)
+      this.openDm(fromNick)
+    } else {
+      this.renderDm()
+    }
+  }
+
+  private openDm(nick: string): void {
+    this.activeDm = nick.toLowerCase()
+    el('dm-peer').textContent = nick
+    el('dmpanel').classList.remove('hidden')
+    this.renderDm()
+  }
+
+  private renderDm(): void {
+    if (!this.activeDm) return
+    const log = el('dm-log')
+    const thread = this.dmThreads.get(this.activeDm) ?? []
+    log.innerHTML = thread
+      .slice(-60)
+      .map((m) => `<div class="${m.self ? 'self' : 'them'}"><span class="who">${m.self ? 'you' : escapeHtml(m.from)}</span>${escapeHtml(m.text)}</div>`)
+      .join('')
+    log.scrollTop = log.scrollHeight
+  }
+
+  private sendDm(): void {
+    const input = el<HTMLInputElement>('dm-input')
+    const text = input.value.trim()
+    const conn = this.conn
+    if (!text || !this.activeDm || !conn || !('sendDm' in conn)) return
+    const peer = el('dm-peer').textContent ?? this.activeDm
+    ;(conn as FreeqBackend).sendDm(peer, text)
+    const thread = this.dmThreads.get(this.activeDm) ?? []
+    thread.push({ from: 'you', text, self: true, ts: Date.now() })
+    this.dmThreads.set(this.activeDm, thread)
+    input.value = ''
+    this.renderDm()
   }
 
   // ---------- test hook (used by the e2e suite; harmless in production) ----------

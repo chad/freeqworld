@@ -66,13 +66,22 @@ const AGENTS = [
       }
       return `i remember what this channel says — CHATHISTORY is my library. mention me with "search <term>" and i will quote it.`
     },
+    onDm: (ctx) => ctx.agent.brain({ ...ctx, history: ctx.allHistory }),
   },
   {
     nick: 'cartographer',
     persona: 'The Cartographer',
     brain: (ctx) => {
+      if (/quest/i.test(ctx.text)) {
+        ctx.issueQuest(ctx.from)
+        return `i've sent you a sealed envelope, ${ctx.from}. check your DMs.`
+      }
       const top = ctx.directory.slice(0, 6).map((d) => `${d.name} (${d.count})`).join(', ')
-      return `every room in the world is a real channel on this server. the liveliest right now: ${top}. the world client at freeqworld renders LIST as a town.`
+      return `every room in the world is a real channel on this server. the liveliest right now: ${top}. say "quest" and i will put you to work.`
+    },
+    onDm: (ctx) => {
+      if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true)
+      return `i map channels into rooms. say "quest" for a courier run — real work, verified in the real channel.`
     },
   },
 ]
@@ -114,20 +123,68 @@ for (const [i, agent] of AGENTS.entries()) {
     if (buf) buf.push(...messages.filter((m) => !m.isSystem && m.text))
   })
 
+  // courier quests: issued over DM, completed by saying the phrase in the
+  // real target channel — the agent is a member there and verifies for real
+  const quests = new Map() // nickLower -> { phrase, target }
+  const AGENT_NICKS = AGENTS.map((a) => a.nick)
+  const issueQuest = (nick, viaDm = false) => {
+    const others = CHANNELS.length > 1 ? CHANNELS.filter((c) => c !== '#general') : CHANNELS
+    const target = others[Math.floor(Math.random() * others.length)]
+    const phrase = `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+    quests.set(nick.toLowerCase(), { phrase, target })
+    const brief = `COURIER RUN for ${nick}: carry this sealed phrase to ${target} and say it aloud: ${phrase} — i keep a post there and will confirm the delivery myself.`
+    if (!viaDm) client.sendMessage(nick, brief)
+    return brief
+  }
+  const ctxFor = (msg, ch) => ({
+    agent,
+    text: msg.text,
+    from: msg.from,
+    history: history.get(ch) ?? [],
+    allHistory: [...history.values()].flat(),
+    directory,
+    issueQuest,
+  })
+
   const lastReply = new Map()
   client.on('message', (ch, msg) => {
-    if (!CHANNELS.includes(ch) || msg.isSelf || !msg.text) return
+    if (msg.isSelf || !msg.text || AGENT_NICKS.some((n) => msg.from.toLowerCase().startsWith(n))) return
+
+    // direct message → the agent's DM brain
+    if (!ch.startsWith('#') && !ch.startsWith('&')) {
+      if (!agent.onDm || ch === 'server') return
+      const last = lastReply.get(`dm:${msg.from}`) ?? 0
+      if (Date.now() - last < 5_000) return
+      lastReply.set(`dm:${msg.from}`, Date.now())
+      const reply = agent.onDm(ctxFor(msg, ch))
+      if (reply) setTimeout(() => client.sendMessage(msg.from, reply), 600 + Math.random() * 600)
+      return
+    }
+
+    if (!CHANNELS.includes(ch)) return
     const buf = history.get(ch)
     if (buf) {
       buf.push(msg)
       if (buf.length > 300) buf.shift()
     }
+
+    // quest completion: the right courier says the right phrase in the right room
+    const quest = quests.get(msg.from.toLowerCase())
+    if (quest && ch === quest.target && msg.text.includes(quest.phrase)) {
+      quests.delete(msg.from.toLowerCase())
+      setTimeout(() => {
+        client.sendMessage(ch, `⭐ delivery confirmed — ${msg.from} carried ${quest.phrase} across the network. the courier run is complete; the channel bore witness.`)
+        client.sendMessage(msg.from, `quest complete, ${msg.from}. ⭐ say "quest" whenever you want another run.`)
+      }, 700)
+      return
+    }
+
     if (!msg.text.toLowerCase().includes(agent.nick)) return
     const last = lastReply.get(ch) ?? 0
     if (Date.now() - last < 10_000) return
     lastReply.set(ch, Date.now())
-    const reply = agent.brain({ text: msg.text, from: msg.from, history: history.get(ch) ?? [], directory })
-    setTimeout(() => client.sendMessage(ch, reply), 900 + Math.random() * 900)
+    const reply = agent.brain(ctxFor(msg, ch))
+    if (reply) setTimeout(() => client.sendMessage(ch, reply), 900 + Math.random() * 900)
   })
 
   // wander: slow deterministic drift, one ephemeral TAGMSG every ~2.5s

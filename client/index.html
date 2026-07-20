@@ -97,6 +97,19 @@
     .vstat { font-size: 0.8rem; padding: 2px 8px; border: 1px solid var(--border); }
     .vstat.retrieved { color: var(--green); border-color: var(--green); }
     .vstat.sealed { color: var(--red); border-color: var(--red); }
+    #dmpanel {
+      position: fixed; bottom: 12px; left: 12px; width: 320px; z-index: 30;
+      background: var(--panel); border: 1px solid var(--cyan); box-shadow: 0 0 24px rgba(86, 201, 214, 0.15);
+      display: flex; flex-direction: column;
+    }
+    #dmpanel header { background: var(--panel2); border-bottom: 1px solid var(--border); padding: 4px 8px; display: flex; justify-content: space-between; }
+    #dmpanel header .peer { color: var(--cyan); }
+    #dm-log { max-height: 180px; min-height: 60px; overflow-y: auto; padding: 6px 8px; font-size: 0.82rem; line-height: 1.5; }
+    #dm-log .self { color: var(--green); }
+    #dm-log .them { color: var(--ink); }
+    #dm-log .who { color: var(--dim); margin-right: 4px; }
+    #dmpanel .rowline { display: flex; gap: 4px; padding: 6px; border-top: 1px solid var(--border); }
+    #dmpanel .rowline input { flex: 1; }
     .toast {
       position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
       background: var(--panel2); border: 1px solid var(--amber); color: var(--amber);
@@ -176,6 +189,7 @@
             <div class="field"><b>verification</b> <span id="idcard-verify"></span></div>
             <div class="field hidden" id="idcard-agent-row"><b>agent chain</b> <span id="idcard-chain" data-testid="idcard-chain"></span></div>
             <div class="field hidden" id="idcard-caps-row"><b>capabilities</b> <span id="idcard-caps"></span></div>
+            <button id="idcard-dm" data-testid="idcard-dm" class="primary hidden">💬 Direct message</button>
             <button id="idcard-close">Close</button>
           </div>
         </div>
@@ -207,6 +221,16 @@
         <div id="insp-log"></div>
       </div>
     </main>
+  </div>
+  <div id="dmpanel" class="hidden" data-testid="dm-panel">
+    <header>
+      <span>💬 <span class="peer" id="dm-peer">—</span></span>
+      <button id="dm-close" style="padding:0 6px">✕</button>
+    </header>
+    <div id="dm-log" data-testid="dm-log"></div>
+    <div class="rowline">
+      <input id="dm-input" data-testid="dm-input" placeholder="private message… (Enter)" maxlength="500" autocomplete="off" />
+    </div>
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
