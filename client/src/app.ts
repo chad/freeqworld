@@ -4,13 +4,8 @@
 
 import type { DurableEvent, MemberInfo, RoomManifest, ServerFrame, TownProfile, WorldPosition } from '../../shared/src/protocol'
 import { verifyEvent } from '../../shared/src/signing'
-import { generateTilemap, isWalkable, LAUNCH_ROOMS, roomFor, TILE, type Tilemap } from '../../shared/src/world'
+import { generateTilemap, isWalkable, roomFor, TILE, type Tilemap } from '../../shared/src/world'
 import { seededPrng } from '../../shared/src/hkdf'
-
-/** Launch rooms as seen without a federation peer (remote exits stripped). */
-function LAUNCH_ROOMS_VIEW(): RoomManifest[] {
-  return LAUNCH_ROOMS.map((r) => ({ ...r, exits: r.exits.filter((e) => !e.remote_server) }))
-}
 import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine } from './audio'
 import { FreeqBackend } from './freeqBackend'
@@ -68,7 +63,7 @@ export class App {
   private conn: TownConnection | FreeqBackend | null = null
   private town: TownProfile | null = null
   private rooms = new Map<string, RoomManifest>()
-  private channel = '#lobby'
+  private channel = '' // '' = spawn wherever the server's world says
   private map: Tilemap | null = null
   private members = new Map<string, MemberInfo>()
   private remotes = new Map<string, RemotePlayer>()
@@ -128,6 +123,8 @@ export class App {
   }
 
   private previewWorld(): void {
+    // pre-login placeholder — the real world is generated from the server's
+    // live channel list the moment you enter
     this.town = {
       schema: 'freeq.at/world/server-profile/v1',
       server: 'irc.freeq.at',
@@ -138,7 +135,6 @@ export class App {
       music_pack: 'freeq-01',
       peers: [],
     }
-    this.rooms = new Map(LAUNCH_ROOMS_VIEW().map((r) => [r.channel, r]))
     this.enterRoom('#lobby', [], [])
   }
 
@@ -251,8 +247,14 @@ export class App {
       const msg = durable.event
       this.lastMessageId = msg.id
       if (msg.enc && msg.enc.iv === 'sdk') {
-        // the SDK already decrypted this E2EE channel message locally
+        // the SDK decrypted this E2EE channel message locally — that is the
+        // evidence that this room really is encrypted (never assumed)
         this.vaultPlain.set(msg.id, msg.content)
+        const room = this.rooms.get(msg.channel)
+        if (room && !room.encrypted) {
+          room.encrypted = true
+          this.updateVaultUi()
+        }
         if (live) {
           this.addBubbleFor(msg.sender, msg.content)
           this.audio.speechBlip(msg.sender)
@@ -350,7 +352,7 @@ export class App {
     }
     badge.classList.remove('hidden')
     if (this.backendKind() === 'freeq') {
-      badge.textContent = '🔓 key: retrieved · e2e (sdk aes-256-gcm)'
+      badge.textContent = '🔐 e2ee channel · decrypted locally'
       badge.className = 'vstat retrieved'
     } else if (this.vaultKey) {
       badge.textContent = '🔓 key: retrieved · e2e'
@@ -615,7 +617,7 @@ export class App {
     const name = el<HTMLInputElement>('name-input').value.trim() || `wanderer-${Math.floor(Math.random() * 900 + 100)}`
     this.identity = createIdentity(name)
     el('landing').classList.add('hidden')
-    this.connect()
+    this.connect('')
     this.toast(`your DID: ${shortDid(this.identity.did)} — your avatar is derived from it`)
   }
 
@@ -626,7 +628,7 @@ export class App {
       const did = await resolveBlueskyHandle(handle)
       this.identity = createIdentity(handle.split('.')[0] ?? handle, { did, handle })
       el('landing').classList.add('hidden')
-      this.connect()
+      this.connect('')
       this.toast(`linked ${handle} → ${shortDid(did)} · avatar derived from your AT Protocol DID`)
     } catch {
       this.toast('could not resolve that handle — try guest entry')
@@ -653,14 +655,36 @@ export class App {
     el('obj-name').textContent = o.label
     el('obj-type').textContent = o.type
     el('obj-caps').textContent = o.capabilities.join(', ')
-    const bodies: Record<string, string> = {
-      'how-terminal':
-        'This "game" is a Freeq client. Rooms are channels; every message is an ed25519-signed durable event; movement is ephemeral presence that expires and is never logged. Open Dev mode to watch the raw protocol, or fetch /api/debug/log/%23lobby to read the store itself.',
-      'peer-board': `Peered towns: ${this.town?.peers.map((p) => `${p.server} @ ${p.url}`).join(' · ') || 'none'}. Messages in #federation cross with signatures intact.`,
-      'key-panel': 'Vault key status is client-side only. The server relays AES-GCM envelopes it cannot open — check the raw log and see for yourself.',
-      kiosk: 'Rooms: ' + [...this.rooms.values()].map((r) => `${r.name} (${r.channel})`).join(' · '),
+    const body = el('obj-body')
+    if (o.id === 'directory' && this.town?.directory?.length) {
+      // the real, live channel directory — click to travel (portal-directory, spec §7.5)
+      body.innerHTML =
+        `<div style="max-height:300px;overflow-y:auto">` +
+        this.town.directory
+          .map(
+            (d) =>
+              `<div class="dirrow" data-ch="${escapeHtml(d.channel)}" style="cursor:pointer;padding:2px 0">` +
+              `<span style="color:var(--cyan)">${escapeHtml(d.channel)}</span> ` +
+              `<span style="color:var(--dim)">${d.users} ${d.users === 1 ? 'soul' : 'souls'}${d.topic ? ' · ' + escapeHtml(d.topic.slice(0, 60)) : ''}</span></div>`,
+          )
+          .join('') +
+        `</div>`
+      for (const rowEl of body.querySelectorAll<HTMLElement>('.dirrow')) {
+        rowEl.addEventListener('click', () => {
+          el('objcard').classList.add('hidden')
+          this.conn?.join(rowEl.dataset.ch!)
+        })
+      }
+    } else {
+      const bodies: Record<string, string> = {
+        'how-terminal':
+          'This "game" is a Freeq client. Rooms are channels; every message is an ed25519-signed durable event; movement is ephemeral presence that expires and is never logged. Open Dev mode to watch the raw protocol, or fetch /api/debug/log/%23lobby to read the store itself.',
+        'peer-board': `Peered towns: ${this.town?.peers.map((p) => `${p.server} @ ${p.url}`).join(' · ') || 'none'}. Messages in #federation cross with signatures intact.`,
+        'key-panel': 'Vault key status is client-side only. The server relays AES-GCM envelopes it cannot open — check the raw log and see for yourself.',
+        kiosk: 'Rooms: ' + [...this.rooms.values()].map((r) => `${r.name} (${r.channel})`).join(' · '),
+      }
+      body.textContent = bodies[o.id] ?? `A ${o.type}. Interactions: ${o.capabilities.join(', ')}.`
     }
-    el('obj-body').textContent = bodies[o.id] ?? `A ${o.type}. Interactions: ${o.capabilities.join(', ')}.`
     el('objcard').classList.remove('hidden')
   }
 
@@ -1031,6 +1055,7 @@ export class App {
       },
       join: (channel: string) => this.conn?.join(channel),
       doors: () => this.map?.doors ?? [],
+      directory: () => this.town?.directory ?? [],
       audio: () => this.audio.status(),
     }
   }

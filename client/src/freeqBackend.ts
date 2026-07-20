@@ -8,7 +8,7 @@
 import { FreeqClient } from '@freeq/sdk'
 import nacl from 'tweetnacl'
 import type { ChatMessage, DurableEvent, MemberInfo, ServerFrame, WorldPosition } from '../../shared/src/protocol'
-import { LAUNCH_ROOMS, roomFor } from '../../shared/src/world'
+import { worldFromChannels, type ChannelEntry, type LiveWorld } from '../../shared/src/liveWorld'
 import type { Identity } from './identity'
 import { decodePosTag, encodePosTag, POS_TAG } from './posTag'
 
@@ -45,8 +45,6 @@ function nickDid(nick: string): string {
   return `did:freeq:nick:${nick.toLowerCase()}`
 }
 
-const VAULT_PASSPHRASE = 'freeq-vault-demo'
-
 export class FreeqBackend {
   readonly serverUrl: string
   readonly kind = 'freeq' as const
@@ -61,6 +59,9 @@ export class FreeqBackend {
   private joinPending: { channel: string; members: MemberInfo[] | null; history: DurableEvent[] | null; timer: number; isWelcome: boolean } | null = null
   private authedDid: string | null = null
   private closed = false
+  private world: LiveWorld | null = null
+  private listEntries: ChannelEntry[] = []
+  private listTimer = 0
 
   constructor(opts: BackendOptions) {
     this.opts = opts
@@ -73,7 +74,7 @@ export class FreeqBackend {
     this.client = new FreeqClient({
       url: opts.serverUrl,
       nick,
-      channels: [opts.channel],
+      channels: [], // joined after the world is generated from LIST
       onNickCollision: 'random-suffix',
       sasl: id
         ? {
@@ -92,8 +93,15 @@ export class FreeqBackend {
     })
     this.client.on('ready', () => {
       opts.onOpen?.(performance.now() - started)
-      this.beginJoin(this.channel, true)
+      // the world is generated from the server's real channel list
+      this.listEntries = []
+      this.client.raw('LIST')
+      this.listTimer = window.setTimeout(() => this.onListComplete(), 5000)
     })
+    this.client.on('channelListEntry', (entry: ChannelEntry) => {
+      this.listEntries.push(entry)
+    })
+    this.client.on('channelListEnd', () => this.onListComplete())
     this.client.on('channelJoined', (channel: string) => {
       if (channel !== this.channel) return
       this.client.requestHistory(channel)
@@ -258,6 +266,15 @@ export class FreeqBackend {
     }
   }
 
+  private onListComplete(): void {
+    if (this.world) return
+    window.clearTimeout(this.listTimer)
+    this.world = worldFromChannels(this.listEntries)
+    // honor an explicitly requested channel; otherwise spawn where the server's life is
+    this.channel = this.channel || this.world.spawn
+    this.beginJoin(this.channel, true)
+  }
+
   private beginJoin(channel: string, isWelcome: boolean): void {
     if (this.joinPending) window.clearTimeout(this.joinPending.timer)
     this.joinPending = {
@@ -267,19 +284,11 @@ export class FreeqBackend {
       isWelcome,
       timer: window.setTimeout(() => this.finishJoin(), 2500),
     }
-    if (!isWelcome) {
-      this.positions.clear()
-      this.members.clear()
-      this.channel = channel
-      const room = roomFor(channel)
-      if (room.encrypted) void this.client.setChannelEncryption(channel, VAULT_PASSPHRASE)
-      this.client.join(channel)
-      this.client.requestHistory(channel)
-    } else {
-      const room = roomFor(channel)
-      if (room.encrypted) void this.client.setChannelEncryption(channel, VAULT_PASSPHRASE)
-      this.client.requestHistory(channel)
-    }
+    this.positions.clear()
+    this.members.clear()
+    this.channel = channel
+    this.client.join(channel)
+    this.client.requestHistory(channel)
   }
 
   private maybeFinishJoin(): void {
@@ -301,12 +310,13 @@ export class FreeqBackend {
           server: this.host(),
           name: this.host() === 'irc.freeq.at' ? 'Freeq' : this.host(),
           theme: 'network-noir',
-          spawn_room: '#lobby',
+          spawn_room: this.world?.spawn ?? pending.channel,
           palette: 'amber-cyan',
           music_pack: 'freeq-01',
           peers: [],
+          directory: this.world?.directory ?? [],
         },
-        rooms: LAUNCH_ROOMS.map((r) => ({ ...r, exits: r.exits.filter((e) => !e.remote_server) })),
+        rooms: this.world?.rooms ?? [],
         history,
         members,
         channel: pending.channel,

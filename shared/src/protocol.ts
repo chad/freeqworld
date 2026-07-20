@@ -9,6 +9,8 @@ export interface TownProfile {
   palette: string
   music_pack: string
   peers: { server: string; url: string }[]
+  /** live ranked channel directory — the portal-directory strategy (spec §7.5) */
+  directory?: { channel: string; topic: string; users: number }[]
 }
 
 export type RoomTemplate =

@@ -33,6 +33,18 @@ test.describe('live against irc.freeq.at (spec 4.1: the protocol is real)', () =
     expect(stateA.town).toBe('irc.freeq.at')
     expect(stateA.did).toMatch(/^did:key:z6Mk/)
 
+    // the world was generated from the server's real channel list:
+    // spawn is the busiest gathering channel, and the plaza doors + directory
+    // point at channels that actually exist
+    expect(stateA.channel).toMatch(/^#/)
+    const doors = (await a.evaluate(() => (window as any).__fimp.doors())) as { channel: string }[]
+    expect(doors.length).toBeGreaterThanOrEqual(3)
+    const directory = (await a.evaluate(() => (window as any).__fimp.directory())) as { channel: string; users: number }[]
+    expect(directory.length).toBeGreaterThan(20) // the real server has many real channels
+    for (const door of doors) {
+      expect(directory.some((d) => d.channel === door.channel), `door to ${door.channel} not in live directory`).toBe(true)
+    }
+
     // move both to a scratch channel (any channel maps to a room, spec 7.5)
     await hookJoin(a, SCRATCH)
     await hookJoin(b, SCRATCH)
