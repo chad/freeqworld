@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeqWorld</title>
+  <style>
+    :root {
+      --bg: #0d0d14;
+      --panel: #14141f;
+      --panel2: #1b1b2b;
+      --ink: #d8d6c8;
+      --dim: #8a8896;
+      --amber: #ffb454;
+      --cyan: #56c9d6;
+      --green: #67c26b;
+      --red: #e0555f;
+      --border: #2c2c40;
+      font-size: 15px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    button { font-family: inherit; background: var(--panel2); color: var(--ink); border: 1px solid var(--border); padding: 6px 12px; cursor: pointer; }
+    button:hover { border-color: var(--amber); color: var(--amber); }
+    button.primary { background: var(--amber); color: #1a1207; border-color: var(--amber); font-weight: 700; }
+    button.primary:hover { filter: brightness(1.1); color: #1a1207; }
+    input { font-family: inherit; background: #0a0a10; color: var(--ink); border: 1px solid var(--border); padding: 6px 10px; }
+    input:focus { outline: none; border-color: var(--cyan); }
+
+    #app { display: flex; flex-direction: column; height: 100%; }
+    header {
+      display: flex; align-items: center; gap: 12px; padding: 6px 12px;
+      background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap;
+    }
+    header .logo { color: var(--amber); font-weight: 700; letter-spacing: 2px; }
+    header .loc { color: var(--cyan); }
+    header .topic { color: var(--dim); font-size: 0.85rem; flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    header .modes button.active { border-color: var(--cyan); color: var(--cyan); }
+
+    main { display: flex; flex: 1; min-height: 0; }
+    #worldwrap { flex: 1.4; position: relative; background: #000; display: flex; align-items: center; justify-content: center; min-width: 0; }
+    canvas#world { image-rendering: pixelated; background: #000; }
+    #side { flex: 1; display: flex; flex-direction: column; min-width: 300px; max-width: 560px; border-left: 1px solid var(--border); background: var(--panel); }
+
+    body.mode-chat #worldwrap { display: none; }
+    body.mode-chat #side { max-width: none; flex: 1; }
+    body.mode-world #side { display: none; }
+    #inspector { display: none; }
+    body.mode-dev #inspector { display: flex; }
+
+    #transcript { flex: 1; overflow-y: auto; padding: 8px 10px; font-size: 0.88rem; line-height: 1.5; }
+    #transcript .row { margin-bottom: 2px; word-wrap: break-word; }
+    #transcript .who { color: var(--cyan); }
+    #transcript .who.agent { color: var(--amber); }
+    #transcript .sys { color: var(--dim); font-style: italic; }
+    #transcript .sealed { color: var(--dim); }
+    #transcript .origin { color: var(--dim); font-size: 0.75rem; }
+
+    #members { border-top: 1px solid var(--border); max-height: 130px; overflow-y: auto; padding: 6px 10px; font-size: 0.82rem; }
+    #members .m { cursor: pointer; padding: 1px 0; }
+    #members .m:hover { color: var(--amber); }
+    #members .badge { font-size: 0.72rem; border: 1px solid var(--border); padding: 0 4px; margin-left: 6px; color: var(--amber); }
+    #members .sigil { color: var(--green); }
+
+    #composer-bar { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--border); align-items: center; }
+    #composer-bar input { flex: 1; }
+    #reactions { display: flex; gap: 2px; }
+    #reactions button { padding: 4px 6px; }
+
+    #inspector { flex-direction: column; border-left: 1px solid var(--border); width: 380px; background: var(--panel); font-size: 0.78rem; }
+    #inspector h3 { margin: 8px 10px 4px; color: var(--amber); font-size: 0.85rem; }
+    #inspector .meta { padding: 0 10px 6px; color: var(--dim); border-bottom: 1px solid var(--border); }
+    #insp-log { flex: 1; overflow-y: auto; padding: 6px 10px; }
+    #insp-log .f { margin-bottom: 6px; border-left: 2px solid var(--border); padding-left: 6px; white-space: pre-wrap; word-break: break-all; }
+    #insp-log .ok { color: var(--green); }
+    #insp-log .bad { color: var(--red); }
+
+    /* overlays */
+    .overlay {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: rgba(6, 6, 12, 0.78); z-index: 10;
+    }
+    .card {
+      background: var(--panel); border: 1px solid var(--border); padding: 24px 28px; max-width: 480px;
+      box-shadow: 0 0 40px rgba(255, 180, 84, 0.08);
+    }
+    .card h1 { color: var(--amber); letter-spacing: 4px; margin: 0 0 4px; font-size: 1.6rem; }
+    .card .sub { color: var(--dim); margin-bottom: 18px; font-size: 0.85rem; }
+    .card .rowline { display: flex; gap: 8px; margin-bottom: 10px; }
+    .card .rowline input { flex: 1; }
+    .card .hint { color: var(--dim); font-size: 0.75rem; margin-top: 12px; line-height: 1.5; }
+    .card a { color: var(--cyan); }
+    .field { margin: 4px 0; font-size: 0.85rem; word-break: break-all; }
+    .field b { color: var(--dim); font-weight: 400; margin-right: 6px; }
+    #idcard-close, #travel-cancel, #obj-close { margin-top: 12px; }
+    #idcard .avatar-preview { image-rendering: pixelated; float: right; margin-left: 12px; border: 1px solid var(--border); }
+    .vstat { font-size: 0.8rem; padding: 2px 8px; border: 1px solid var(--border); }
+    .vstat.retrieved { color: var(--green); border-color: var(--green); }
+    .vstat.sealed { color: var(--red); border-color: var(--red); }
+    .toast {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: var(--panel2); border: 1px solid var(--amber); color: var(--amber);
+      padding: 8px 16px; z-index: 40; font-size: 0.85rem;
+    }
+    .hidden { display: none !important; }
+    kbd { border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; color: var(--cyan); font-size: 0.78rem; }
+  </style>
+</head>
+<body class="mode-split">
+  <div id="app">
+    <header>
+      <span class="logo">FREEQWORLD</span>
+      <span class="loc" data-testid="header-loc">—</span>
+      <span class="topic" data-testid="header-topic"></span>
+      <span id="vault-status" class="vstat hidden" data-testid="vault-status"></span>
+      <span class="modes">
+        <button id="mode-world" title="World only">World</button>
+        <button id="mode-split" class="active" title="World + transcript">Split</button>
+        <button id="mode-chat" data-testid="mode-chat" title="Conventional chat client">Chat</button>
+        <button id="mode-dev" data-testid="mode-dev" title="Protocol inspector">Dev</button>
+      </span>
+      <button id="sound-btn" title="Toggle chiptune soundtrack">♪ off</button>
+    </header>
+    <main>
+      <div id="worldwrap">
+        <canvas id="world" data-testid="world-canvas" tabindex="0"></canvas>
+        <div id="landing" class="overlay" data-testid="landing">
+          <div class="card">
+            <h1>FREEQWORLD</h1>
+            <div class="sub">a federated chat protocol rendered as a 1992 multiplayer RPG</div>
+            <div class="rowline">
+              <input id="name-input" data-testid="name-input" placeholder="pick a name…" maxlength="24" />
+              <button id="enter-guest" data-testid="enter-guest" class="primary">Enter world</button>
+            </div>
+            <div class="rowline">
+              <input id="bsky-input" data-testid="bsky-input" placeholder="or a Bluesky handle (alice.bsky.social)" />
+              <button id="enter-bsky" data-testid="enter-bsky">Link identity</button>
+            </div>
+            <div class="hint">
+              You are watching the live plaza behind this card — those are real messages in a real
+              channel (<b>#lobby</b>) on a real Freeq server. Your character is derived from your
+              DID, not stored on this server: same identity, same face, in every town.<br /><br />
+              Move <kbd>WASD</kbd> · talk <kbd>Enter</kbd> · interact <kbd>Space</kbd> · react <kbd>R</kbd> ·
+              chat-mode <kbd>C</kbd>
+            </div>
+          </div>
+        </div>
+        <div id="travel" class="overlay hidden" data-testid="travel-confirm">
+          <div class="card">
+            <h1 style="font-size:1.1rem">FEDERATION PORTAL</h1>
+            <div class="sub">You are leaving this server.</div>
+            <div class="field"><b>destination</b> <span id="travel-dest"></span></div>
+            <div class="field"><b>operated by</b> an independent town server — its rules apply on arrival</div>
+            <div class="field"><b>you keep</b> your DID, your avatar, your keys (they never left your browser)</div>
+            <button id="travel-go" data-testid="travel-go" class="primary">Travel</button>
+            <button id="travel-cancel">Stay</button>
+          </div>
+        </div>
+        <div id="idcard" class="overlay hidden" data-testid="identity-card">
+          <div class="card" style="min-width:380px">
+            <canvas class="avatar-preview" id="idcard-avatar" width="64" height="96"></canvas>
+            <h1 style="font-size:1rem" id="idcard-name">—</h1>
+            <div class="field"><b>display name</b> <span id="idcard-display"></span></div>
+            <div class="field"><b>handle</b> <span id="idcard-handle"></span></div>
+            <div class="field"><b>did</b> <span id="idcard-did" data-testid="idcard-did"></span></div>
+            <div class="field"><b>verification</b> <span id="idcard-verify"></span></div>
+            <div class="field hidden" id="idcard-agent-row"><b>agent chain</b> <span id="idcard-chain" data-testid="idcard-chain"></span></div>
+            <div class="field hidden" id="idcard-caps-row"><b>capabilities</b> <span id="idcard-caps"></span></div>
+            <button id="idcard-close">Close</button>
+          </div>
+        </div>
+        <div id="objcard" class="overlay hidden" data-testid="object-card">
+          <div class="card" style="min-width:340px">
+            <h1 style="font-size:1rem" id="obj-name">—</h1>
+            <div class="field"><b>type</b> <span id="obj-type"></span></div>
+            <div class="field"><b>schema</b> freeq.at/world/object/v1</div>
+            <div class="field"><b>capabilities</b> <span id="obj-caps"></span></div>
+            <div class="field" id="obj-body" style="margin-top:8px; color: var(--ink)"></div>
+            <button id="obj-close">Close</button>
+          </div>
+        </div>
+      </div>
+      <div id="side">
+        <div id="transcript" data-testid="transcript" aria-live="polite" aria-label="Channel transcript"></div>
+        <div id="members" data-testid="member-list"></div>
+        <div id="composer-bar">
+          <span id="reactions">
+            <button data-r="👍">👍</button><button data-r="❤️">❤️</button><button data-r="🔥">🔥</button><button data-r="🎷">🎷</button>
+          </span>
+          <input id="msg-input" data-testid="msg-input" placeholder="say something… (Enter)" maxlength="800" autocomplete="off" />
+          <button id="send-btn" data-testid="send-btn" class="primary">Send</button>
+        </div>
+      </div>
+      <div id="inspector" data-testid="inspector">
+        <h3>PROTOCOL INSPECTOR</h3>
+        <div class="meta" id="insp-meta">connecting…</div>
+        <div id="insp-log"></div>
+      </div>
+    </main>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

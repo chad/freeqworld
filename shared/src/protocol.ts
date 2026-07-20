@@ -126,6 +126,8 @@ export interface MemberInfo {
   display_name: string
   verification_status: 'verified' | 'unverified'
   is_agent: boolean
+  /** when a linked identity (e.g. a Bluesky did:plc) anchors the avatar (spec §8.2) */
+  avatar_did?: string
   appearance_form?: string
   agent_chain?: string[]
   capabilities?: string[]
@@ -134,7 +136,7 @@ export interface MemberInfo {
 
 // ---- client -> server ----
 export type ClientFrame =
-  | { t: 'hello'; did: string; handle: string; display_name: string; channel: string; client_instance: string }
+  | { t: 'hello'; did: string; handle: string; display_name: string; channel: string; client_instance: string; avatar_did?: string; spectator?: boolean }
   | { t: 'join'; channel: string }
   | { t: 'msg'; event: Omit<ChatMessage, 'origin_server' | 'edit_state' | 'sender_name'> & { sender_name?: string } }
   | { t: 'react'; event: Omit<Reaction, 'origin_server'> }

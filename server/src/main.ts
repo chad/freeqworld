@@ -150,6 +150,11 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     const channel = decodeURIComponent(path.slice('/api/debug/log/'.length))
     return json({ server: town.config.server, channel, durable_log: town.getLog(channel) })
   }
+  // live ephemeral presence — demonstrates the durable/ephemeral split
+  if (path.startsWith('/api/debug/presence/')) {
+    const channel = decodeURIComponent(path.slice('/api/debug/presence/'.length))
+    return json({ server: town.config.server, channel, ephemeral: true, positions: town.getPresence(channel) })
+  }
   if (path === '/api/agents') {
     return json(town.getAgents().map((a) => a.member))
   }
@@ -160,7 +165,8 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   const full = join(CLIENT_DIST, filePath)
   if (!full.startsWith(CLIENT_DIST)) {
     res.writeHead(403)
-    return res.end()
+    res.end()
+    return
   }
   try {
     const body = await readFile(full)

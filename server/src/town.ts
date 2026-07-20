@@ -40,6 +40,8 @@ interface ConnState {
   channel: string
   client_instance: string
   verification_status: 'verified' | 'unverified'
+  avatar_did?: string
+  spectator: boolean
 }
 
 interface ChannelState {
@@ -155,13 +157,14 @@ export class Town {
     const online: MemberInfo[] = []
     for (const [conn, st] of this.connState) {
       void conn
-      if (st.channel === channel) {
+      if (st.channel === channel && !st.spectator) {
         online.push({
           did: st.did,
           handle: st.handle,
           display_name: st.display_name,
           verification_status: st.verification_status,
           is_agent: false,
+          avatar_did: st.avatar_did,
         })
       }
     }
@@ -210,6 +213,8 @@ export class Town {
       channel,
       client_instance: frame.client_instance,
       verification_status: frame.did.startsWith('did:key:') ? 'verified' : 'unverified',
+      avatar_did: frame.avatar_did,
+      spectator: frame.spectator ?? false,
     }
     this.connState.set(conn, st)
     const ch = this.channels.get(channel)!
@@ -222,10 +227,11 @@ export class Town {
       members: this.membersOf(channel),
       channel,
     })
+    if (st.spectator) return
     this.broadcast(channel, {
       t: 'member',
       channel,
-      member: { did: st.did, handle: st.handle, display_name: st.display_name, verification_status: st.verification_status, is_agent: false },
+      member: { did: st.did, handle: st.handle, display_name: st.display_name, verification_status: st.verification_status, is_agent: false, avatar_did: st.avatar_did },
       online: true,
     }, conn)
   }
@@ -298,6 +304,9 @@ export class Town {
     const channel = durable.event.channel
     const ch = this.channels.get(channel)
     if (!ch) return conn.send({ t: 'error', message: `no such channel ${channel}` })
+    if (this.connState.get(conn)?.spectator) {
+      return conn.send({ t: 'error', message: 'read-only guest mode: log in to speak' })
+    }
     const signer = this.signerOf(durable)
 
     if (!this.allowRate(signer)) {
@@ -330,7 +339,7 @@ export class Town {
 
   private onPos(conn: Connection, pos: WorldPosition): void {
     const st = this.connState.get(conn)
-    if (!st || pos.did !== st.did) return
+    if (!st || pos.did !== st.did || st.spectator) return
     const ch = this.channels.get(pos.channel)
     if (!ch) return
     const existing = ch.presence.get(pos.did)
