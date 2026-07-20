@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@freeq/sdk": "file:../../freeq/freeq-sdk-js",
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.0"
   },

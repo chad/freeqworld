@@ -25,6 +25,10 @@ export class ChiptuneEngine {
     return this._muted
   }
 
+  status(): { muted: boolean; ctxState: string; scheduling: boolean } {
+    return { muted: this._muted, ctxState: this.ctx?.state ?? 'none', scheduling: this.timer != null }
+  }
+
   toggle(): boolean {
     if (this._muted) this.start()
     else this.stop()

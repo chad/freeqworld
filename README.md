@@ -2,12 +2,15 @@
 
 **A federated chat protocol rendered as a 1992 multiplayer RPG.**
 
-What looks like a retro multiplayer game is a working client for a Freeq-style
-protocol: every room is a real channel, every message is an ed25519-signed
-durable event, every bot is a first-class identity with cryptographic
-provenance, encryption happens in your browser, and the portal at the north
-end of Federation Station leads to a second, independently operated server —
-which you can cross without changing who you are.
+What looks like a retro multiplayer game is a **real freeq client**: by
+default it connects to the production server at `irc.freeq.at` via
+`@freeq/sdk`. Every room is a real IRC channel with real people in it; your
+identity is a browser-held ed25519 `did:key` authenticated with the server
+over SASL ATPROTO-CHALLENGE; your avatar is derived from that DID; spatial
+presence rides ephemeral IRCv3 `TAGMSG`s that are relayed but never stored;
+members on conventional clients appear as parked pixel characters at
+DID-derived spots. The Chat button is an ordinary client for the same
+channels.
 
 The retro RPG is the demo. The protocol is the world model.
 
@@ -15,11 +18,23 @@ The retro RPG is the demo. The protocol is the world model.
 
 ```sh
 npm install
-npm run build        # bundles the client (≈26 KB gzipped)
-npm run dev          # starts both towns
-# Freeq City  → http://localhost:8787
-# Neon Wharf  → http://localhost:8788  (federated peer)
+npm run build        # bundles the client
+npm run dev          # serves the client + two demo towns
+# http://localhost:8787          → world client on the REAL irc.freeq.at
+# http://localhost:8787/?server=http://localhost:8787
+#                                → same client on the local demo town
+# http://localhost:8788          (second local town, federated with the first)
 ```
+
+Two backends, one client:
+
+- **freeq** (default): durable state lives on `irc.freeq.at` — channels,
+  history (CHATHISTORY), reactions, membership, native AES-256-GCM channel
+  E2EE. Positions go over vendored `+freeq.at/world-pos` client tags.
+- **town** (`?server=`): a self-contained local implementation of the same
+  ideas (signed events, ephemeral presence, agents with provenance, two-town
+  federation) — used by the hermetic e2e suite and the "run your own town"
+  story.
 
 ## Test it
 
@@ -102,18 +117,21 @@ e2e          Playwright suites: world, vault, federation
 
 ## Honest limitations
 
-- Bluesky "login" resolves your handle to its DID and derives your avatar
-  from it, but does not prove control of the account (no OAuth flow); such
-  identities are marked *unverified*. Message signing always uses the local
-  device `did:key`.
+- On the freeq backend your `did:key` is authenticated for real (SASL
+  method=crypto), but Bluesky *handle* login only resolves the handle to its
+  DID for avatar derivation — it does not prove account control (no OAuth
+  flow); such identities are marked *unverified*.
 - The Vault's passphrase is a public demo constant. The mechanics are real —
-  PBKDF2-derived AES-GCM key, client-side seal/open, ciphertext-only relay —
-  the secrecy is not. Key rotation and per-member sealed key distribution are
-  not implemented.
-- The server verifies signatures and enforces per-DID rate limits, but there
-  is no persistent storage (logs are in-memory) and no admission control.
+  client-side AES-GCM (the SDK's channel E2EE on freeq; PBKDF2+WebCrypto on
+  the local town), ciphertext-only relay — the secrecy is not.
+- The local town server verifies signatures and enforces per-DID rate
+  limits, but has no persistent storage (logs are in-memory) and no
+  admission control.
 - Presence privacy: positions are visible to everyone in the room; there is
   no invisible mode yet.
+- The agent NPCs (Archivist, Packet, …) inhabit the local towns. On
+  irc.freeq.at, members with a server-attested agent actor class are marked
+  as agents; the launch NPCs are not deployed there.
 
 ## Non-goals (by design)
 

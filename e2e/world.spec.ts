@@ -1,9 +1,9 @@
 import { expect, test } from '@playwright/test'
-import { enterAsGuest, hookJoin, hookState, hookTeleport, sendMessage, uniqueName } from './helpers'
+import { enterAsGuest, hookJoin, hookState, hookTeleport, sendMessage, TOWN_A, uniqueName } from './helpers'
 
 test.describe('landing (spec 6.1, 25.1)', () => {
   test('shows a live plaza with real seeded channel messages before any login', async ({ page }) => {
-    await page.goto('/')
+    await page.goto(TOWN_A)
     await expect(page.getByTestId('landing')).toBeVisible()
     await expect(page.locator('#landing h1')).toHaveText('FREEQWORLD')
     // real messages from the durable #lobby log are already in the transcript
@@ -13,7 +13,7 @@ test.describe('landing (spec 6.1, 25.1)', () => {
   })
 
   test('read-only guests cannot speak (spec MVP guest role)', async ({ page }) => {
-    await page.goto('/')
+    await page.goto(TOWN_A)
     await page.getByTestId('landing').waitFor()
     // spectator connection exists but there is no identity: sending is refused client-side
     await expect(page.getByTestId('msg-input')).toBeVisible()

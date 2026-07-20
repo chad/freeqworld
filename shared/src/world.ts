@@ -195,6 +195,27 @@ export const LAUNCH_ROOMS: RoomManifest[] = [
   },
 ]
 
+/** Every channel maps 1:1 to a room; unknown channels get a synthesized lounge (spec §7.5 procedural outskirts). */
+export function roomFor(channel: string): RoomManifest {
+  const known = LAUNCH_ROOMS.find((r) => r.channel === channel)
+  if (known) return known
+  return {
+    schema: 'freeq.at/world/room/v1',
+    channel,
+    name: channel.replace(/^#/, ''),
+    template: 'lounge',
+    tileset: 'freeq-outskirts-01',
+    width: 26,
+    height: 16,
+    topic: `Freeq channel ${channel}`,
+    encrypted: false,
+    exits: [{ direction: 'south', channel: '#lobby', label: 'Back to the plaza' }],
+    zones: [],
+    objects: [],
+    music: { mode: 'adaptive', base_cue: 'outskirts_100bpm', bpm: 100, topic_adaptation: true },
+  }
+}
+
 function stringSeed(s: string): Uint8Array {
   // FNV-1a expanded to 16 bytes for the prng
   const out = new Uint8Array(16)

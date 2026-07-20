@@ -6,8 +6,11 @@ export function uniqueName(prefix = 'tester'): string {
   return `${prefix}-${Date.now() % 100000}-${userCounter++}`
 }
 
+export const TOWN_A = '/?server=http://localhost:8787'
+export const TOWN_B = '/?server=http://localhost:8788'
+
 /** Enter the world as a named guest; resolves once the landing card is gone and the world is joined. */
-export async function enterAsGuest(page: Page, name: string, url = '/'): Promise<void> {
+export async function enterAsGuest(page: Page, name: string, url = TOWN_A): Promise<void> {
   await page.goto(url)
   await page.getByTestId('name-input').fill(name)
   await page.getByTestId('enter-guest').click()
@@ -16,7 +19,7 @@ export async function enterAsGuest(page: Page, name: string, url = '/'): Promise
   await page.getByTestId('member-list').filter({ hasText: name }).waitFor()
 }
 
-export async function hookState(page: Page): Promise<{ channel: string; town: string; did: string; x: number; y: number; members: string[] }> {
+export async function hookState(page: Page): Promise<{ channel: string; town: string; did: string; x: number; y: number; members: string[]; remotes: number; backend: string }> {
   return page.evaluate(() => (window as any).__fimp.state())
 }
 

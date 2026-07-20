@@ -4,9 +4,16 @@
 
 import type { DurableEvent, MemberInfo, RoomManifest, ServerFrame, TownProfile, WorldPosition } from '../../shared/src/protocol'
 import { verifyEvent } from '../../shared/src/signing'
-import { generateTilemap, isWalkable, TILE, type Tilemap } from '../../shared/src/world'
+import { generateTilemap, isWalkable, LAUNCH_ROOMS, roomFor, TILE, type Tilemap } from '../../shared/src/world'
+import { seededPrng } from '../../shared/src/hkdf'
+
+/** Launch rooms as seen without a federation peer (remote exits stripped). */
+function LAUNCH_ROOMS_VIEW(): RoomManifest[] {
+  return LAUNCH_ROOMS.map((r) => ({ ...r, exits: r.exits.filter((e) => !e.remote_server) }))
+}
 import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine } from './audio'
+import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, resolveBlueskyHandle, type Identity } from './identity'
 import { TownConnection } from './net'
 import { drawPreview, spriteFor, type SpriteSet } from './sprites'
@@ -58,7 +65,7 @@ function el<T extends HTMLElement>(id: string): T {
 
 export class App {
   private identity: Identity | null = null
-  private conn: TownConnection | null = null
+  private conn: TownConnection | FreeqBackend | null = null
   private town: TownProfile | null = null
   private rooms = new Map<string, RoomManifest>()
   private channel = '#lobby'
@@ -81,6 +88,7 @@ export class App {
   private inspectorFrames: { dir: 'in' | 'out'; summary: string; ok: boolean | null }[] = []
   private rtt = 0
   private pendingTravel: { server: string; url: string } | null = null
+  private travelUrl: string | null = null
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
   private spriteSets = new Map<string, SpriteSet>()
@@ -94,18 +102,44 @@ export class App {
     this.identity = loadIdentity()
     if (this.identity) {
       el('landing').classList.add('hidden')
-      this.connect(location.origin)
-    } else {
+      this.connect()
+    } else if (this.backendKind() === 'town') {
       // read-only spectator behind the landing card (spec §6.1)
-      this.connectSpectator(location.origin)
+      this.connectSpectator(this.townUrl())
+    } else {
+      // freeq backend: no spectator join on the public server — render a local preview
+      this.previewWorld()
     }
     requestAnimationFrame(() => this.frame())
   }
 
   // ---------- connection ----------
 
-  private serverUrlOverride(): string {
-    return new URLSearchParams(location.search).get('server') ?? location.origin
+  private backendKind(): 'town' | 'freeq' {
+    return new URLSearchParams(location.search).get('server') ? 'town' : 'freeq'
+  }
+
+  private townUrl(): string {
+    return this.travelUrl ?? new URLSearchParams(location.search).get('server') ?? location.origin
+  }
+
+  private freeqUrl(): string {
+    return new URLSearchParams(location.search).get('freeq') ?? 'wss://irc.freeq.at/irc'
+  }
+
+  private previewWorld(): void {
+    this.town = {
+      schema: 'freeq.at/world/server-profile/v1',
+      server: 'irc.freeq.at',
+      name: 'Freeq',
+      theme: 'network-noir',
+      spawn_room: '#lobby',
+      palette: 'amber-cyan',
+      music_pack: 'freeq-01',
+      peers: [],
+    }
+    this.rooms = new Map(LAUNCH_ROOMS_VIEW().map((r) => [r.channel, r]))
+    this.enterRoom('#lobby', [], [])
   }
 
   private connectSpectator(url: string): void {
@@ -122,22 +156,33 @@ export class App {
     })
   }
 
-  private connect(url: string, channel = this.channel): void {
+  private connect(channel = this.channel): void {
     this.conn?.close()
     this.remotes.clear()
-    this.conn = new TownConnection({
-      serverUrl: url,
+    const common = {
       channel,
       identity: this.identity,
       avatarDid: this.identity ? avatarDid(this.identity) : undefined,
-      onFrame: (f) => this.onFrame(f),
-      onRawIn: (f) => this.inspect('in', f),
-      onOpen: (rtt) => {
+      onFrame: (f: ServerFrame) => this.onFrame(f),
+      onRawIn: (f: ServerFrame) => this.inspect('in', f),
+      onOpen: (rtt: number) => {
         this.rtt = rtt
         this.updateInspectorMeta()
       },
       onClose: () => this.toast('connection lost — reconnecting…'),
-    })
+    }
+    if (this.backendKind() === 'freeq') {
+      this.conn = new FreeqBackend({
+        ...common,
+        serverUrl: this.freeqUrl(),
+        onAuth: (did) => {
+          this.toast(`◈ DID authenticated with the server: ${shortDid(did)}`)
+          this.updateInspectorMeta()
+        },
+      })
+    } else {
+      this.conn = new TownConnection({ ...common, serverUrl: this.townUrl() })
+    }
   }
 
   private onFrame(frame: ServerFrame): void {
@@ -171,8 +216,12 @@ export class App {
 
   private enterRoom(channel: string, history: DurableEvent[], members: MemberInfo[]): void {
     this.channel = channel
-    const room = this.rooms.get(channel)
-    if (!room) return
+    let room = this.rooms.get(channel)
+    if (!room) {
+      // every channel maps to a room — synthesize one for the outskirts (spec §7.5)
+      room = roomFor(channel)
+      this.rooms.set(channel, room)
+    }
     this.map = generateTilemap(room)
     this.me.x = this.map.spawn[0] + 0.5
     this.me.y = this.map.spawn[1] + 0.5
@@ -188,8 +237,10 @@ export class App {
     this.renderTranscript()
     this.renderMembers()
     this.updateVaultUi()
-    if (room.encrypted && !this.vaultKey) this.promptVaultKey()
-    if (room.encrypted) void this.decryptVisible()
+    if (room.encrypted && this.backendKind() === 'town') {
+      if (!this.vaultKey) this.promptVaultKey()
+      void this.decryptVisible()
+    }
     this.updateInspectorMeta()
   }
 
@@ -199,7 +250,14 @@ export class App {
     if (durable.kind === 'message') {
       const msg = durable.event
       this.lastMessageId = msg.id
-      if (msg.enc) {
+      if (msg.enc && msg.enc.iv === 'sdk') {
+        // the SDK already decrypted this E2EE channel message locally
+        this.vaultPlain.set(msg.id, msg.content)
+        if (live) {
+          this.addBubbleFor(msg.sender, msg.content)
+          this.audio.speechBlip(msg.sender)
+        }
+      } else if (msg.enc) {
         void this.tryDecrypt(msg.id, msg.enc).then(() => {
           this.renderTranscript()
           if (live) this.addBubbleFor(msg.sender, this.vaultPlain.get(msg.id) ?? null)
@@ -291,7 +349,10 @@ export class App {
       return
     }
     badge.classList.remove('hidden')
-    if (this.vaultKey) {
+    if (this.backendKind() === 'freeq') {
+      badge.textContent = '🔓 key: retrieved · e2e (sdk aes-256-gcm)'
+      badge.className = 'vstat retrieved'
+    } else if (this.vaultKey) {
       badge.textContent = '🔓 key: retrieved · e2e'
       badge.className = 'vstat retrieved'
     } else {
@@ -311,7 +372,7 @@ export class App {
       return
     }
     const room = this.rooms.get(this.channel)
-    if (room?.encrypted) {
+    if (room?.encrypted && this.backendKind() === 'town') {
       if (!this.vaultKey) {
         this.toast('vault key still sealed')
         return
@@ -319,6 +380,7 @@ export class App {
       const env = await encryptMessage(this.vaultKey, content)
       this.conn.sendMessage(this.channel, '', env)
     } else {
+      // freeq backend: the SDK's channel E2EE encrypts before the wire when active
       this.conn.sendMessage(this.channel, content)
     }
     input.value = ''
@@ -337,7 +399,7 @@ export class App {
         const who = `<span class="who${isAgent ? ' agent' : ''}" data-did="${m.sender}">${escapeHtml(m.sender_name)}${isAgent ? ' ⚙' : ''}</span>`
         const origin = m.origin_server !== this.town?.server ? ` <span class="origin">[via ${escapeHtml(m.origin_server)}]</span>` : ''
         if (m.enc) {
-          const plain = this.vaultPlain.get(m.id)
+          const plain = m.enc.iv === 'sdk' ? m.content : this.vaultPlain.get(m.id)
           if (plain !== undefined) {
             rows.push(`<div class="row">${who} 🔐 ${escapeHtml(plain)}${origin}</div>`)
           } else {
@@ -418,8 +480,16 @@ export class App {
       const { signature, origin_server, edit_state, sender_name, ...base } = ev
       void origin_server; void edit_state; void sender_name
       const signer = durable.kind === 'message' ? (ev.sender as string) : (ev.actor as string)
-      ok = verifyEvent(base, signature as string, signer)
-      summary = `${durable.kind} ${String(ev.id).slice(0, 8)} from ${shortDid(signer)} origin=${ev.origin_server} sig=${ok ? 'VERIFIED' : 'INVALID'}`
+      const sig = String(signature ?? '')
+      if (sig.startsWith('relay:')) {
+        // freeq backend: server-attributed msgid; per-event sigs live in server MSGSIG
+        summary = `${durable.kind} ${sig.slice(6, 20)} from ${shortDid(signer)} via ${ev.origin_server}`
+      } else if (sig === '') {
+        summary = `${durable.kind} from ${shortDid(signer)} via ${ev.origin_server}`
+      } else {
+        ok = verifyEvent(base, sig, signer)
+        summary = `${durable.kind} ${String(ev.id).slice(0, 8)} from ${shortDid(signer)} origin=${ev.origin_server} sig=${ok ? 'VERIFIED' : 'INVALID'}`
+      }
     } else if (frame.t === 'presence') {
       summary = `presence ×${frame.positions.length} (ephemeral — never stored)`
     } else if (frame.t === 'welcome') {
@@ -443,12 +513,17 @@ export class App {
   }
 
   private updateInspectorMeta(): void {
-    el('insp-meta').innerHTML = [
+    const lines = [
       `server: ${this.conn?.serverUrl ?? '—'} (${this.town?.server ?? '?'})`,
-      `transport: WebSocket/TLS-capable · rtt≈${this.rtt.toFixed(0)}ms`,
-      `channel: ${this.channel} · durable log + ephemeral presence split`,
-      `raw storage: <a href="${this.conn?.serverUrl}/api/debug/log/${encodeURIComponent(this.channel)}" target="_blank">/api/debug/log/${this.channel}</a>`,
-    ].join('<br>')
+      `transport: WebSocket/TLS · rtt≈${this.rtt.toFixed(0)}ms`,
+      `channel: ${this.channel} · durable history + ephemeral TAGMSG presence split`,
+    ]
+    if (this.backendKind() === 'town') {
+      lines.push(`raw storage: <a href="${this.conn?.serverUrl}/api/debug/log/${encodeURIComponent(this.channel)}" target="_blank">/api/debug/log/${this.channel}</a>`)
+    } else {
+      lines.push(`identity: ${this.identity ? `${shortDid(this.identity.did)} (SASL crypto did:key)` : 'guest'}`)
+    }
+    el('insp-meta').innerHTML = lines.join('<br>')
   }
 
   // ---------- input & UI ----------
@@ -480,8 +555,18 @@ export class App {
     }
     el('sound-btn').addEventListener('click', () => {
       const muted = this.audio.toggle()
+      localStorage.setItem('fimp-sound', muted ? 'off' : 'on')
       el('sound-btn').textContent = muted ? '♪ off' : '♪ on'
     })
+    // audio needs a user gesture: start on the first one unless the user muted last time
+    const autoStart = () => {
+      if (localStorage.getItem('fimp-sound') !== 'off' && this.audio.muted) {
+        this.audio.start()
+        el('sound-btn').textContent = '♪ on'
+      }
+    }
+    window.addEventListener('pointerdown', autoStart, { once: true })
+    window.addEventListener('keydown', autoStart, { once: true })
     for (const btn of document.querySelectorAll('#reactions button')) {
       btn.addEventListener('click', () => {
         if (this.lastMessageId && this.conn) this.conn.sendReaction(this.channel, this.lastMessageId, (btn as HTMLElement).dataset.r!)
@@ -530,7 +615,7 @@ export class App {
     const name = el<HTMLInputElement>('name-input').value.trim() || `wanderer-${Math.floor(Math.random() * 900 + 100)}`
     this.identity = createIdentity(name)
     el('landing').classList.add('hidden')
-    this.connect(this.serverUrlOverride())
+    this.connect()
     this.toast(`your DID: ${shortDid(this.identity.did)} — your avatar is derived from it`)
   }
 
@@ -541,7 +626,7 @@ export class App {
       const did = await resolveBlueskyHandle(handle)
       this.identity = createIdentity(handle.split('.')[0] ?? handle, { did, handle })
       el('landing').classList.add('hidden')
-      this.connect(this.serverUrlOverride())
+      this.connect()
       this.toast(`linked ${handle} → ${shortDid(did)} · avatar derived from your AT Protocol DID`)
     } catch {
       this.toast('could not resolve that handle — try guest entry')
@@ -589,10 +674,18 @@ export class App {
     const cam = this.camera()
     const wx = (px + cam.x) / TILE_PX
     const wy = (py + cam.y) / TILE_PX
-    // click on a player?
+    // click on a player (moving or parked)?
     for (const r of this.remotes.values()) {
       if (Math.abs(r.x - wx) < 1.2 && Math.abs(r.y - 1.2 - wy) < 1.6) {
         this.showIdentityCard(r.did)
+        return
+      }
+    }
+    for (const m of this.members.values()) {
+      if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+      const spot = this.parkedSpot(m.did)
+      if (spot && Math.abs(spot.x - wx) < 1.2 && Math.abs(spot.y - 1.2 - wy) < 1.6) {
+        this.showIdentityCard(m.did)
         return
       }
     }
@@ -666,7 +759,8 @@ export class App {
     el('travel').classList.add('hidden')
     this.audio.stinger('portal')
     this.channel = '#federation'
-    this.connect(url, '#federation')
+    this.travelUrl = url
+    this.connect('#federation')
     this.toast(`crossed into ${server} — same DID, same avatar, different server`)
   }
 
@@ -808,10 +902,15 @@ export class App {
       ctx.fillText(label, sx - label.length * 1.6, sy + (d.direction === 'north' ? 14 : d.direction === 'south' ? -6 : 10))
     }
 
-    // remote players then me (draw order by y)
-    const drawables: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean }[] = []
+    // remote players, parked members, then me (draw order by y)
+    const drawables: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean; parked?: boolean }[] = []
     for (const r of this.remotes.values()) {
       drawables.push({ x: r.x, y: r.y, did: r.did, facing: r.facing, moving: r.animation === 'walk', me: false })
+    }
+    for (const m of this.members.values()) {
+      if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+      const spot = this.parkedSpot(m.did)
+      if (spot) drawables.push({ x: spot.x, y: spot.y, did: m.did, facing: 'south', moving: false, me: false, parked: true })
     }
     if (this.identity) {
       drawables.push({ x: this.me.x, y: this.me.y, did: avatarDid(this.identity), facing: this.me.facing, moving: this.me.moving, me: true })
@@ -836,13 +935,41 @@ export class App {
     }
   }
 
+  private parkedCache = new Map<string, { x: number; y: number }>()
+
+  /** Members on conventional clients broadcast no position; park them at a
+   *  deterministic DID-derived spot so the room shows everyone in the channel. */
+  private parkedSpot(did: string): { x: number; y: number } | null {
+    if (!this.map) return null
+    const key = `${this.channel}|${did}`
+    const hit = this.parkedCache.get(key)
+    if (hit) return hit
+    const seed = new Uint8Array(16)
+    for (let i = 0; i < did.length; i++) seed[i % 16] = (seed[i % 16]! * 31 + did.charCodeAt(i)) & 0xff
+    const rng = seededPrng(seed)
+    for (let tries = 0; tries < 60; tries++) {
+      const x = 2 + rng() * (this.map.width - 4)
+      const y = 2 + rng() * (this.map.height - 4)
+      if (isWalkable(this.map, x, y)) {
+        const spot = { x, y }
+        this.parkedCache.set(key, spot)
+        return spot
+      }
+    }
+    const spot = { x: this.map.spawn[0] + 1.5, y: this.map.spawn[1] + 0.5 }
+    this.parkedCache.set(key, spot)
+    return spot
+  }
+
   private findPlayer(did: string): { x: number; y: number } | null {
     if (this.identity && (did === this.identity.did || did === avatarDid(this.identity))) return { x: this.me.x, y: this.me.y }
     const r = this.remotes.get(did)
-    return r ? { x: r.x, y: r.y } : null
+    if (r) return { x: r.x, y: r.y }
+    if (this.members.has(did)) return this.parkedSpot(did)
+    return null
   }
 
-  private drawPlayer(d: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean }, cam: { x: number; y: number }): void {
+  private drawPlayer(d: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean; parked?: boolean }, cam: { x: number; y: number }): void {
     const ctx = this.ctx
     const member = this.members.get(d.did)
     const spriteDid = d.me ? d.did : (member?.avatar_did ?? d.did)
@@ -855,7 +982,9 @@ export class App {
     const frame = d.moving ? (Math.floor(this.walkPhase) % 2 === 0 ? 1 : 2) : 0
     if (set) {
       const img = set.frames.get(`${d.facing}:${frame}`)!
+      if (d.parked) ctx.globalAlpha = 0.75
       ctx.drawImage(img, Math.round(sx - 8), Math.round(sy - 20))
+      ctx.globalAlpha = 1
     } else {
       ctx.fillStyle = '#888'
       ctx.fillRect(sx - 4, sy - 12, 8, 12)
@@ -863,7 +992,7 @@ export class App {
     // name tag + badges
     const name = d.me ? this.identity?.display_name ?? 'me' : member?.display_name ?? shortDid(d.did)
     ctx.font = '7px monospace'
-    ctx.fillStyle = member?.is_agent ? '#ffb454' : d.me ? '#67c26b' : '#d8d6c8'
+    ctx.fillStyle = member?.is_agent ? '#ffb454' : d.me ? '#67c26b' : d.parked ? '#8a8896' : '#d8d6c8'
     const label = member?.is_agent ? `⚙ ${name}` : member?.verification_status === 'verified' ? `◈ ${name}` : name
     ctx.fillText(label, Math.round(sx - label.length * 2), Math.round(sy - 22))
   }
@@ -892,6 +1021,8 @@ export class App {
         x: this.me.x,
         y: this.me.y,
         members: [...this.members.values()].map((m) => m.display_name),
+        remotes: this.remotes.size,
+        backend: this.backendKind(),
       }),
       teleport: (x: number, y: number) => {
         this.me.x = x
@@ -900,6 +1031,7 @@ export class App {
       },
       join: (channel: string) => this.conn?.join(channel),
       doors: () => this.map?.doors ?? [],
+      audio: () => this.audio.status(),
     }
   }
 
