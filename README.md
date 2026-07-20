@@ -36,6 +36,21 @@ Two backends, one client:
   federation) — used by the hermetic e2e suite and the "run your own town"
   story.
 
+**The world is generated from the server, not authored.** On connect the
+client issues `LIST` and builds the town from what actually exists: every
+real channel becomes a room (real topic as the subtitle, size from real
+population, template from the channel's character), the spawn lands in the
+busiest gathering channel, the plaza's doors rank by liveliness, and a
+directory kiosk lists every channel — click to travel. A room only renders
+as encrypted after the client has actually decrypted E2EE payloads there.
+
+**The NPCs are real clients.** `node scripts/world-agents.mjs` runs the
+Archivist and Cartographer as freeq clients with persistent `did:key`
+identities (SASL-authenticated, registered as agents): they join real
+channels, wander via the same ephemeral TAGMSGs the browser sends, and answer
+mentions by quoting real CHATHISTORY. Anyone on any IRC client sees them;
+the world client sees them walk.
+
 ## Test it
 
 ```sh
