@@ -139,6 +139,14 @@ for (const [i, agent] of AGENTS.entries()) {
   }
   const AGENT_NICKS = AGENTS.map((a) => a.nick)
   const issueQuest = (nick, viaDm = false) => {
+    // idempotent: a pending quest is re-sent, never replaced — DM replays on
+    // reconnect (or an impatient courier) must not invalidate the envelope
+    const existing = quests.get(nick.toLowerCase())
+    if (existing) {
+      const reminder = `your envelope is still sealed, ${nick}: carry ${existing.phrase} to ${existing.target} and say it aloud.${existing.bonus ? ' the run still pays double.' : ''}`
+      if (!viaDm) client.sendMessage(nick, reminder)
+      return reminder
+    }
     // quieter rooms pay double — couriers carry life where there is none
     const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
     const target = ranked[0] ?? CHANNELS[0]
