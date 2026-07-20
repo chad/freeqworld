@@ -10,7 +10,7 @@ export interface TownProfile {
   music_pack: string
   peers: { server: string; url: string }[]
   /** live ranked channel directory — the portal-directory strategy (spec §7.5) */
-  directory?: { channel: string; topic: string; users: number; personal?: boolean }[]
+  directory?: { channel: string; topic: string; users: number; personal?: boolean; unlisted?: boolean }[]
   /** count of development/test channels filtered out of the town */
   hidden_channels?: number
 }
