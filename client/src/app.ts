@@ -457,6 +457,13 @@ export class App {
   }
 
   private renderMembers(): void {
+    // we are standing in this channel: its live roster is ground truth, better
+    // than a stale (or hidden) LIST count — keep the directory honest
+    const entry = this.town?.directory?.find((e) => e.channel === this.channel)
+    if (entry && this.members.size > 0) {
+      entry.users = this.members.size
+      entry.unlisted = undefined
+    }
     const box = el('members')
     const items: string[] = []
     for (const m of this.members.values()) {
@@ -749,7 +756,7 @@ export class App {
           (d) =>
             `<div class="dirrow" data-ch="${escapeHtml(d.channel)}" style="cursor:pointer;padding:2px 0">` +
             `<span style="color:var(--cyan)">${escapeHtml(d.channel)}</span> ` +
-            `<span style="color:var(--dim)">${d.personal ? 'recent' : `${d.users} ${d.users === 1 ? 'soul' : 'souls'}`}${d.topic ? ' · ' + escapeHtml(d.topic.slice(0, 60)) : ''}</span></div>`,
+            `<span style="color:var(--dim)">${d.unlisted && !d.users ? 'unlisted' : d.personal && !d.users ? 'recent' : `${d.users} ${d.users === 1 ? 'soul' : 'souls'}`}${d.topic ? ' · ' + escapeHtml(d.topic.slice(0, 60)) : ''}</span></div>`,
         )
         .join('') +
       `</div>` +

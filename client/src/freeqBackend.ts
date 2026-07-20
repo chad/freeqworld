@@ -339,6 +339,13 @@ export class FreeqBackend {
     this.channel = channel
     this.client.join(channel)
     this.client.requestHistory(channel)
+    // if the server thinks we never left (no JOIN echo → no NAMES), ask for
+    // the roster explicitly so the room never comes up empty
+    window.setTimeout(() => {
+      if (this.joinPending?.channel === channel && this.joinPending.members === null) {
+        this.client.raw(`NAMES ${channel}`)
+      }
+    }, 1200)
   }
 
   private maybeFinishJoin(): void {
@@ -388,6 +395,9 @@ export class FreeqBackend {
   /** User accepted a channel's policy gate: send the real POLICY ACCEPT, then enter. */
   acceptPolicy(channel: string): void {
     this.client.raw(`POLICY ${channel} ACCEPT`)
+    // leave the fallback room properly — staying silently joined means a later
+    // return gets no JOIN echo / NAMES and the roster would come up empty
+    if (this.channel && this.channel !== channel) this.client.part(this.channel)
     window.setTimeout(() => this.beginJoin(channel, false), 300)
   }
 
