@@ -1,6 +1,7 @@
 node_modules/
-dist/
+client/dist/
 test-results/
 playwright-report/
 .vite/
 .agents/
+!vendor/freeq-sdk/dist/
