@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { worldFromChannels } from './liveWorld'
+import { isDebris, worldFromChannels } from './liveWorld'
 
 const REAL_SAMPLE = [
   { name: '#general', topic: 'General discussion — anything goes', count: 5 },
@@ -17,18 +17,67 @@ const REAL_SAMPLE = [
   { name: '#alexandria', topic: 'https://getalexandria.ai', count: 3 },
 ]
 
+describe('isDebris: development/test channels are not part of the town', () => {
+  it('flags the real debris patterns from irc.freeq.at', () => {
+    for (const name of [
+      '#e2e-claude-53w889', '#pw-mndv3khq-47', '#avtest-20260523171225', '#naptest1115',
+      '#chadmac-sweeptest', '#fimp-e2e-420489', '#rev-persist-d4y6', '#fqpilot-5eaf',
+      '#test', '#test104', '#test1234', '#claude-test', '#didtest', '#chadtest',
+      '#oblivion-debug', '#scrprobe-0703', '#repro', '#del3verify', '#p0verify',
+      '#pilotdemo', '#chadsweep-demo', '#delegation-demo', '#naptest-e2ee', '#freeqpilot.',
+      '#zapnap-swarm-test', '#alexandria-test', '#ada-debug', '#revtest-qi7r',
+    ]) {
+      expect(isDebris(name), `${name} should be debris`).toBe(true)
+    }
+  })
+
+  it('keeps real channels', () => {
+    for (const name of [
+      '#general', '#dev', '#lobby', '#music', '#crypto', '#atproto', '#gaming',
+      '#bots', '#random', '#alexandria', '#freeq', '#hypercerts', '#all-the-claws',
+      '#dmrg', '#nixos', '#obsidian', '#mechanical-keyboards', '#hello', '#crew',
+      '#comicchat', '#null-island', '#f1', '#dxos', '#chad-dev',
+    ]) {
+      expect(isDebris(name), `${name} should be real`).toBe(false)
+    }
+  })
+})
+
 describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () => {
-  it('creates a room for every well-formed channel — nothing invented, nothing dropped', () => {
+  it('creates a room for every real channel and drops development debris', () => {
     const world = worldFromChannels(REAL_SAMPLE)
     const channels = world.rooms.map((r) => r.channel)
     expect(channels).toContain('#general')
-    expect(channels).toContain('#e2e-claude-53w889') // debris is still real
+    expect(channels).not.toContain('#e2e-claude-53w889') // debris hidden from the town
     expect(channels).not.toContain('yokota') // malformed entries are not channels
+    expect(world.hidden).toBe(2) // the two debris channels in the sample
     expect(new Set(channels).size).toBe(channels.length)
     for (const room of world.rooms) {
       expect(room.schema).toBe('freeq.at/world/room/v1')
       expect(room.topic).toBe(REAL_SAMPLE.find((c) => c.name === room.channel)!.topic || `Freeq channel ${room.channel}`)
     }
+  })
+
+  it('gives the server home channel the spawn when it is present', () => {
+    const world = worldFromChannels(
+      [...REAL_SAMPLE, { name: '#freeq', topic: 'the freeq channel', count: 2 }],
+      { home: 'freeq' },
+    )
+    expect(world.spawn).toBe('#freeq')
+  })
+
+  it('merges the user’s personal recent channels even when LIST hides them', () => {
+    const world = worldFromChannels(REAL_SAMPLE, { extraChannels: ['#freeq', '#sekret-hq'] })
+    const channels = world.rooms.map((r) => r.channel)
+    expect(channels).toContain('#freeq')
+    expect(channels).toContain('#sekret-hq')
+    const entry = world.directory.find((d) => d.channel === '#freeq')!
+    expect(entry.personal).toBe(true)
+  })
+
+  it('does not resurrect debris via personal targets', () => {
+    const world = worldFromChannels(REAL_SAMPLE, { extraChannels: ['#e2e-claude-53w889'] })
+    expect(world.rooms.some((r) => r.channel === '#e2e-claude-53w889')).toBe(false)
   })
 
   it('picks the busiest topical channel as the plaza/spawn', () => {
@@ -69,8 +118,8 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
   it('sizes rooms by real population', () => {
     const world = worldFromChannels(REAL_SAMPLE)
     const busy = world.rooms.find((r) => r.channel === '#general')!
-    const empty = world.rooms.find((r) => r.channel === '#e2e-claude-53w889')!
-    expect(busy.width).toBeGreaterThan(empty.width)
+    const quiet = world.rooms.find((r) => r.channel === '#random')!
+    expect(busy.width).toBeGreaterThan(quiet.width)
   })
 
   it('is deterministic', () => {

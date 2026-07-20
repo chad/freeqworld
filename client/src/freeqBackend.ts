@@ -62,6 +62,7 @@ export class FreeqBackend {
   private world: LiveWorld | null = null
   private listEntries: ChannelEntry[] = []
   private listTimer = 0
+  private personalTargets: string[] = []
 
   constructor(opts: BackendOptions) {
     this.opts = opts
@@ -93,10 +94,15 @@ export class FreeqBackend {
     })
     this.client.on('ready', () => {
       opts.onOpen?.(performance.now() - started)
-      // the world is generated from the server's real channel list
+      // the world is generated from the server's real channel list plus the
+      // user's own recent channels (which LIST may hide, e.g. secret ones)
       this.listEntries = []
+      this.client.requestHistoryTargets(60)
       this.client.raw('LIST')
       this.listTimer = window.setTimeout(() => this.onListComplete(), 5000)
+    })
+    this.client.on('historyTarget', (target: string) => {
+      if (target.startsWith('#')) this.personalTargets.push(target)
     })
     this.client.on('channelListEntry', (entry: ChannelEntry) => {
       this.listEntries.push(entry)
@@ -269,7 +275,9 @@ export class FreeqBackend {
   private onListComplete(): void {
     if (this.world) return
     window.clearTimeout(this.listTimer)
-    this.world = worldFromChannels(this.listEntries)
+    const hostParts = this.host().split(':')[0]!.split('.')
+    const home = hostParts.length >= 2 ? hostParts[hostParts.length - 2] : undefined
+    this.world = worldFromChannels(this.listEntries, { home, extraChannels: this.personalTargets })
     // honor an explicitly requested channel; otherwise spawn where the server's life is
     this.channel = this.channel || this.world.spawn
     this.beginJoin(this.channel, true)
@@ -315,6 +323,7 @@ export class FreeqBackend {
           music_pack: 'freeq-01',
           peers: [],
           directory: this.world?.directory ?? [],
+          hidden_channels: this.world?.hidden ?? 0,
         },
         rooms: this.world?.rooms ?? [],
         history,

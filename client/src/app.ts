@@ -605,6 +605,8 @@ export class App {
       this.setMode(document.body.classList.contains('mode-chat') ? 'split' : 'chat')
     } else if (k === 'r') {
       if (this.lastMessageId && this.conn) this.conn.sendReaction(this.channel, this.lastMessageId, '👍')
+    } else if (k === 'g') {
+      this.openDirectory()
     } else if (k === ' ') {
       this.interact()
       e.preventDefault()
@@ -657,24 +659,7 @@ export class App {
     el('obj-caps').textContent = o.capabilities.join(', ')
     const body = el('obj-body')
     if (o.id === 'directory' && this.town?.directory?.length) {
-      // the real, live channel directory — click to travel (portal-directory, spec §7.5)
-      body.innerHTML =
-        `<div style="max-height:300px;overflow-y:auto">` +
-        this.town.directory
-          .map(
-            (d) =>
-              `<div class="dirrow" data-ch="${escapeHtml(d.channel)}" style="cursor:pointer;padding:2px 0">` +
-              `<span style="color:var(--cyan)">${escapeHtml(d.channel)}</span> ` +
-              `<span style="color:var(--dim)">${d.users} ${d.users === 1 ? 'soul' : 'souls'}${d.topic ? ' · ' + escapeHtml(d.topic.slice(0, 60)) : ''}</span></div>`,
-          )
-          .join('') +
-        `</div>`
-      for (const rowEl of body.querySelectorAll<HTMLElement>('.dirrow')) {
-        rowEl.addEventListener('click', () => {
-          el('objcard').classList.add('hidden')
-          this.conn?.join(rowEl.dataset.ch!)
-        })
-      }
+      this.renderDirectory(body)
     } else {
       const bodies: Record<string, string> = {
         'how-terminal':
@@ -685,6 +670,52 @@ export class App {
       }
       body.textContent = bodies[o.id] ?? `A ${o.type}. Interactions: ${o.capabilities.join(', ')}.`
     }
+    el('objcard').classList.remove('hidden')
+  }
+
+  /** The real, live channel directory — click to travel (portal-directory, spec §7.5). */
+  private renderDirectory(body: HTMLElement): void {
+    const directory = this.town?.directory ?? []
+    const hidden = this.town?.hidden_channels ?? 0
+    body.innerHTML =
+      `<div class="rowline" style="margin-bottom:6px"><input id="dir-join" data-testid="dir-join" placeholder="jump to any channel… (#freeq)" /></div>` +
+      `<div style="max-height:280px;overflow-y:auto">` +
+      directory
+        .map(
+          (d) =>
+            `<div class="dirrow" data-ch="${escapeHtml(d.channel)}" style="cursor:pointer;padding:2px 0">` +
+            `<span style="color:var(--cyan)">${escapeHtml(d.channel)}</span> ` +
+            `<span style="color:var(--dim)">${d.personal ? 'recent' : `${d.users} ${d.users === 1 ? 'soul' : 'souls'}`}${d.topic ? ' · ' + escapeHtml(d.topic.slice(0, 60)) : ''}</span></div>`,
+        )
+        .join('') +
+      `</div>` +
+      (hidden > 0 ? `<div style="color:var(--dim);margin-top:6px">${hidden} development/test channels hidden from the town</div>` : '')
+    for (const rowEl of body.querySelectorAll<HTMLElement>('.dirrow')) {
+      rowEl.addEventListener('click', () => {
+        el('objcard').classList.add('hidden')
+        this.conn?.join(rowEl.dataset.ch!)
+      })
+    }
+    const joinInput = body.querySelector<HTMLInputElement>('#dir-join')!
+    joinInput.addEventListener('keydown', (e) => {
+      e.stopPropagation()
+      if (e.key === 'Enter') {
+        const ch = joinInput.value.trim()
+        if (ch.startsWith('#')) {
+          el('objcard').classList.add('hidden')
+          this.conn?.join(ch)
+        }
+      }
+    })
+    setTimeout(() => joinInput.focus(), 50)
+  }
+
+  /** G key (spec §6.4): jump-to-channel via the directory from anywhere. */
+  private openDirectory(): void {
+    el('obj-name').textContent = 'Channel directory'
+    el('obj-type').textContent = 'directory kiosk'
+    el('obj-caps').textContent = 'read, join'
+    this.renderDirectory(el('obj-body'))
     el('objcard').classList.remove('hidden')
   }
 

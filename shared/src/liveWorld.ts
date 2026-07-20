@@ -15,12 +15,35 @@ export interface DirectoryEntry {
   channel: string
   topic: string
   users: number
+  /** true when this came from the user's own recent conversations (CHATHISTORY TARGETS), not the public LIST */
+  personal?: boolean
 }
 
 export interface LiveWorld {
   rooms: RoomManifest[]
   spawn: string
   directory: DirectoryEntry[]
+  /** how many development/test channels were filtered out of the town */
+  hidden: number
+}
+
+export interface WorldOptions {
+  /** the server's own name (e.g. 'freeq' for irc.freeq.at) — its channel gets the spawn bonus */
+  home?: string
+  /** the user's recent channels (real, personal) to merge in even when LIST hides them */
+  extraChannels?: string[]
+}
+
+/** Development/test debris — real channels, but not part of the town.
+ *  Patterns derived from what actually litters irc.freeq.at. */
+export function isDebris(name: string): boolean {
+  const n = name.toLowerCase()
+  if (/(test|e2e|debug|probe|repro|verify|demo(?![a-z]))/.test(n)) return true
+  if (/^#(pw|rev|rb|fqpilot|freeqpilot|webui|chadmac|scrprobe|oblivion|boxd)([-.]|$)/.test(n)) return true
+  if (/\d{3,}/.test(n)) return true // timestamps / run numbers
+  const tail = n.split('-').pop() ?? ''
+  if (n.includes('-') && tail.length >= 4 && /\d/.test(tail) && /[a-z]/.test(tail)) return true // random suffixes
+  return false
 }
 
 const TEMPLATE_KEYWORDS: [RegExp, RoomTemplate][] = [
@@ -47,10 +70,14 @@ function templateFor(name: string, topic: string): RoomTemplate {
 }
 
 /** Liveliness rank: population first, then having a real topic, then brevity.
- *  Conventional gathering-place names get a bonus so the spawn lands there. */
-function rank(c: ChannelEntry): number {
+ *  Conventional gathering-place names — and the server's own home channel —
+ *  get a bonus so the spawn lands where the people are. */
+function rank(c: ChannelEntry, home?: string): number {
   const gathering = /^#(general|lobby|welcome|plaza|main)$/.test(c.name) ? 200 : 0
-  return c.count * 100 + gathering + (c.topic ? 40 : 0) - Math.min(30, c.name.length)
+  // the server's own channel is where its conversation lives — spawn there
+  // when the user can see it, unless some other channel is far busier
+  const homeBonus = home && c.name === `#${home}` ? 1200 : 0
+  return c.count * 100 + gathering + homeBonus + (c.topic ? 40 : 0) - Math.min(30, c.name.length)
 }
 
 const BPM_BY_TEMPLATE: Partial<Record<RoomTemplate, number>> = {
@@ -64,12 +91,22 @@ const BPM_BY_TEMPLATE: Partial<Record<RoomTemplate, number>> = {
   office: 96,
 }
 
-export function worldFromChannels(entries: ChannelEntry[]): LiveWorld {
-  const channels = entries.filter((e) => e.name.startsWith('#'))
+export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = {}): LiveWorld {
+  const wellFormed = entries.filter((e) => e.name.startsWith('#'))
+  const channels = wellFormed.filter((e) => !isDebris(e.name))
+  const hidden = wellFormed.length - channels.length
+  const personal = new Set<string>()
+  for (const name of opts.extraChannels ?? []) {
+    if (!name.startsWith('#') || isDebris(name)) continue
+    if (!channels.some((c) => c.name === name)) {
+      channels.push({ name, topic: '', count: 1 })
+      personal.add(name)
+    }
+  }
   if (channels.length === 0) {
     channels.push({ name: '#lobby', topic: '', count: 0 })
   }
-  const sorted = [...channels].sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name))
+  const sorted = [...channels].sort((a, b) => rank(b, opts.home) - rank(a, opts.home) || a.name.localeCompare(b.name))
   const spawn = sorted[0]!.name
   const doorTargets = sorted.slice(1, 5).map((c) => c.name)
 
@@ -126,6 +163,7 @@ export function worldFromChannels(entries: ChannelEntry[]): LiveWorld {
   return {
     rooms,
     spawn,
-    directory: sorted.map((c) => ({ channel: c.name, topic: c.topic, users: c.count })),
+    directory: sorted.map((c) => ({ channel: c.name, topic: c.topic, users: c.count, personal: personal.has(c.name) || undefined })),
+    hidden,
   }
 }
