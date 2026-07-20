@@ -2,6 +2,9 @@
 
 **A federated chat protocol rendered as a 1992 multiplayer RPG.**
 
+**Live: https://freeqworld.boxd.sh** — walks straight into the real
+[irc.freeq.at](https://irc.freeq.at) server.
+
 What looks like a retro multiplayer game is a **real freeq client**: by
 default it connects to the production server at `irc.freeq.at` via
 `@freeq/sdk`. Every room is a real IRC channel with real people in it; your
