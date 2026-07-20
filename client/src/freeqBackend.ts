@@ -129,6 +129,13 @@ export class FreeqBackend {
         this.joinPending.members = infos
         this.maybeFinishJoin()
       }
+      // resolve real DIDs for members the roster didn't include them for —
+      // avatars derive from the DID, so this makes faces identical on every
+      // client instance rather than falling back to nick-derived stand-ins
+      const unresolved = members.filter((m) => !m.did && !this.client.getDidForNick(m.nick)).slice(0, 15)
+      unresolved.forEach((m, i) => {
+        window.setTimeout(() => this.client.whois(m.nick), 300 + i * 250)
+      })
     })
     this.client.on('historyBatch', (channel: string, messages) => {
       if (channel !== this.channel) return
@@ -188,9 +195,11 @@ export class FreeqBackend {
     this.client.on('userQuit', (nick: string) => drop(nick))
     this.client.on('memberDid', (nick: string, did: string) => {
       const tracked = this.members.get(nick)
-      if (!tracked) return
+      if (!tracked || tracked.info.did === did) return
+      // retire the nick-derived stand-in identity before introducing the real one
+      this.emit({ t: 'member', channel: this.channel, member: tracked.info, online: false, silent: true })
       tracked.info = { ...tracked.info, did, verification_status: 'verified' }
-      this.emit({ t: 'member', channel: this.channel, member: tracked.info, online: true })
+      this.emit({ t: 'member', channel: this.channel, member: tracked.info, online: true, silent: true })
     })
     // ephemeral spatial presence in
     this.client.on('raw', (_line: string, parsed: { tags: Record<string, string>; prefix: string; command: string; params: string[] }) => {

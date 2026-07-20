@@ -202,7 +202,7 @@ export class App {
         if (frame.channel === this.channel) this.onPresence(frame.positions)
         break
       case 'member':
-        this.onMember(frame.member, frame.online)
+        this.onMember(frame.member, frame.online, frame.silent)
         break
       case 'music':
         this.audio.setState(frame.state as MusicState)
@@ -319,18 +319,18 @@ export class App {
     for (const did of [...this.remotes.keys()]) if (!seen.has(did)) this.remotes.delete(did)
   }
 
-  private onMember(member: MemberInfo, online: boolean): void {
+  private onMember(member: MemberInfo, online: boolean, silent = false): void {
     if (online) {
       const isNew = !this.members.has(member.did)
       this.members.set(member.did, member)
-      if (isNew) {
+      if (isNew && !silent) {
         this.transcriptSystem(`${member.display_name} arrived`)
         void this.audio.playLeitmotif(member.avatar_did ?? member.did)
       }
     } else {
       this.members.delete(member.did)
       this.remotes.delete(member.did)
-      this.transcriptSystem(`${member.display_name} left`)
+      if (!silent) this.transcriptSystem(`${member.display_name} left`)
     }
     this.renderMembers()
   }
@@ -1063,30 +1063,46 @@ export class App {
     }
   }
 
-  private parkedCache = new Map<string, { x: number; y: number }>()
+  private parkedLayout = new Map<string, { x: number; y: number }>()
+  private parkedLayoutKey = ''
 
-  /** Members on conventional clients broadcast no position; park them at a
-   *  deterministic DID-derived spot so the room shows everyone in the channel. */
-  private parkedSpot(did: string): { x: number; y: number } | null {
-    if (!this.map) return null
-    const key = `${this.channel}|${did}`
-    const hit = this.parkedCache.get(key)
-    if (hit) return hit
-    const seed = new Uint8Array(16)
-    for (let i = 0; i < did.length; i++) seed[i % 16] = (seed[i % 16]! * 31 + did.charCodeAt(i)) & 0xff
-    const rng = seededPrng(seed)
-    for (let tries = 0; tries < 60; tries++) {
-      const x = 2 + rng() * (this.map.width - 4)
-      const y = 2 + rng() * (this.map.height - 4)
-      if (isWalkable(this.map, x, y)) {
-        const spot = { x, y }
-        this.parkedCache.set(key, spot)
-        return spot
+  /** Members on conventional clients broadcast no position; park each at a
+   *  deterministic DID-derived spot. The layout is computed for the whole
+   *  roster at once (in sorted DID order) so nobody stacks on anyone else —
+   *  same room + same members always yields the same arrangement. */
+  private computeParkedLayout(): void {
+    if (!this.map) return
+    const parked = [...this.members.keys()]
+      .filter((did) => did !== this.identity?.did && !this.remotes.has(did))
+      .sort()
+    const key = `${this.channel}|${parked.join(',')}`
+    if (key === this.parkedLayoutKey) return
+    this.parkedLayoutKey = key
+    this.parkedLayout.clear()
+    const taken: { x: number; y: number }[] = []
+    const clear = (x: number, y: number) =>
+      taken.every((t) => Math.hypot(t.x - x, t.y - y) >= 2.2) &&
+      Math.hypot(this.map!.spawn[0] + 0.5 - x, this.map!.spawn[1] + 0.5 - y) >= 2
+    for (const did of parked) {
+      const seed = new Uint8Array(16)
+      for (let i = 0; i < did.length; i++) seed[i % 16] = (seed[i % 16]! * 31 + did.charCodeAt(i)) & 0xff
+      const rng = seededPrng(seed)
+      let spot: { x: number; y: number } | null = null
+      for (let tries = 0; tries < 80 && !spot; tries++) {
+        const x = 2 + rng() * (this.map.width - 4)
+        const y = 2 + rng() * (this.map.height - 4)
+        // relax the personal-space requirement as attempts run out (crowded rooms)
+        if (isWalkable(this.map, x, y) && (tries > 60 || clear(x, y))) spot = { x, y }
       }
+      if (!spot) spot = { x: this.map.spawn[0] + 1.5 + taken.length, y: this.map.spawn[1] + 0.5 }
+      taken.push(spot)
+      this.parkedLayout.set(did, spot)
     }
-    const spot = { x: this.map.spawn[0] + 1.5, y: this.map.spawn[1] + 0.5 }
-    this.parkedCache.set(key, spot)
-    return spot
+  }
+
+  private parkedSpot(did: string): { x: number; y: number } | null {
+    this.computeParkedLayout()
+    return this.parkedLayout.get(did) ?? null
   }
 
   private findPlayer(did: string): { x: number; y: number } | null {

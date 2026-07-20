@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "FreeqWorld — a federated chat protocol rendered as a 1992 multiplayer RPG",
+  "description": "FreeqWorld \u2014 a federated chat protocol rendered as a 1992 multiplayer RPG",
   "scripts": {
     "dev": "vite-node server/src/main.ts",
     "build": "vite build client",
@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@freeq/sdk": "file:../../freeq/freeq-sdk-js",
+    "@freeq/sdk": "file:./vendor/freeq-sdk",
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.0"
   },
