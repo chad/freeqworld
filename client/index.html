@@ -198,9 +198,13 @@
           <div class="card" style="min-width:420px; max-width:560px">
             <h1 style="font-size:1.1rem">✦ SPARKS</h1>
             <div class="sub"><span id="spark-count">0</span> unique souls touched · title: <span id="spark-title" data-testid="spark-title">Stranger</span></div>
-            <div id="spark-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:320px;overflow-y:auto"></div>
-            <div class="hint">Walk into someone for the first time to collect them. Between two world
-            clients the touch is a signed autograph — ◈ marks a cryptographically verified contact.</div>
+            <div id="spark-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:240px;overflow-y:auto"></div>
+            <div class="field" style="margin-top:10px"><b>passport</b> <span id="journal-explorer" data-testid="journal-explorer">—</span></div>
+            <div id="journal-stamps" style="max-height:80px;overflow-y:auto;font-size:0.75rem"></div>
+            <div class="field"><b>deeds</b> <span id="journal-deeds" data-testid="journal-deeds">—</span></div>
+            <div class="hint">Walk into someone for the first time to collect them — ◈ marks a signed,
+            verified autograph; click a face to play their leitmotif. Stamps are rooms you have
+            genuinely stood in; stars are courier runs verified by an agent in the real channel.</div>
             <button id="sparkbook-close">Close</button>
           </div>
         </div>

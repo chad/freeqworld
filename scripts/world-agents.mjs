@@ -125,14 +125,16 @@ for (const [i, agent] of AGENTS.entries()) {
 
   // courier quests: issued over DM, completed by saying the phrase in the
   // real target channel — the agent is a member there and verifies for real
-  const quests = new Map() // nickLower -> { phrase, target }
+  const quests = new Map() // nickLower -> { phrase, target, bonus }
   const AGENT_NICKS = AGENTS.map((a) => a.nick)
   const issueQuest = (nick, viaDm = false) => {
-    const others = CHANNELS.length > 1 ? CHANNELS.filter((c) => c !== '#general') : CHANNELS
-    const target = others[Math.floor(Math.random() * others.length)]
+    // quieter rooms pay double — couriers carry life where there is none
+    const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
+    const target = ranked[0] ?? CHANNELS[0]
+    const bonus = (history.get(target)?.length ?? 0) < 5
     const phrase = `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
-    quests.set(nick.toLowerCase(), { phrase, target })
-    const brief = `COURIER RUN for ${nick}: carry this sealed phrase to ${target} and say it aloud: ${phrase} — i keep a post there and will confirm the delivery myself.`
+    quests.set(nick.toLowerCase(), { phrase, target, bonus })
+    const brief = `COURIER RUN for ${nick}: carry this sealed phrase to ${target} and say it aloud: ${phrase} — i keep a post there and will confirm the delivery myself.${bonus ? ' that room is quiet; the run pays double.' : ''}`
     if (!viaDm) client.sendMessage(nick, brief)
     return brief
   }
@@ -172,9 +174,10 @@ for (const [i, agent] of AGENTS.entries()) {
     const quest = quests.get(msg.from.toLowerCase())
     if (quest && ch === quest.target && msg.text.includes(quest.phrase)) {
       quests.delete(msg.from.toLowerCase())
+      const stars = quest.bonus ? '⭐⭐' : '⭐'
       setTimeout(() => {
-        client.sendMessage(ch, `⭐ delivery confirmed — ${msg.from} carried ${quest.phrase} across the network. the courier run is complete; the channel bore witness.`)
-        client.sendMessage(msg.from, `quest complete, ${msg.from}. ⭐ say "quest" whenever you want another run.`)
+        client.sendMessage(ch, `${stars} delivery confirmed — ${msg.from} carried ${quest.phrase} across the network${quest.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`)
+        client.sendMessage(msg.from, `quest complete, ${msg.from}. ${stars} say "quest" whenever you want another run.`)
       }, 700)
       return
     }
@@ -187,7 +190,21 @@ for (const [i, agent] of AGENTS.entries()) {
     if (reply) setTimeout(() => client.sendMessage(ch, reply), 900 + Math.random() * 900)
   })
 
-  // wander: slow deterministic drift, one ephemeral TAGMSG every ~2.5s
+  // quiet mode: an NPC only wanders (and beacons position TAGMSGs) in a
+  // channel where a world client is actually present — detected by having
+  // seen someone else's world-pos TAGMSG there recently. Plain IRC users
+  // never receive NPC movement noise.
+  const watchers = new Map() // channel -> last world-pos seen (ms)
+  client.on('raw', (_line, parsed) => {
+    if (parsed.command !== 'TAGMSG') return
+    const from = (parsed.prefix ?? '').split('!')[0] ?? ''
+    if (!from || AGENT_NICKS.some((n) => from.toLowerCase().startsWith(n))) return
+    if (parsed.tags[POS_TAG] ?? parsed.tags[POS_TAG.slice(1)]) {
+      const target = parsed.params?.[0]
+      if (target) watchers.set(target, Date.now())
+    }
+  })
+
   let seq = 0
   setInterval(() => {
     const t = Date.now() / 6000 + i * 2.1
@@ -195,6 +212,7 @@ for (const [i, agent] of AGENTS.entries()) {
     const y = 8 + Math.sin(t * 0.8) * 3
     const facing = Math.abs(Math.sin(t)) > 0.5 ? (Math.sin(t) < 0 ? 'east' : 'west') : 'south'
     for (const ch of CHANNELS) {
+      if (Date.now() - (watchers.get(ch) ?? 0) > 60_000) continue // nobody watching — stand still, stay silent
       try {
         client.sendTagmsg(ch, { [POS_TAG]: `${x.toFixed(2)},${y.toFixed(2)},${facing},walk,${++seq}` })
       } catch {

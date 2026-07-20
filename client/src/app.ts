@@ -12,6 +12,7 @@ import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, resolveBlueskyHandle, type Identity } from './identity'
 import { TownConnection } from './net'
 import { drawPreview, spriteFor, type SpriteSet } from './sprites'
+import { explorerTitle, Journal, shouldRekindle } from './journal'
 import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
@@ -88,10 +89,14 @@ export class App {
   private dmThreads = new Map<string, { from: string; text: string; self: boolean; ts: number }[]>()
   private activeDm: string | null = null
   private sparks = new SparkBook()
+  private journal = new Journal()
   private touchCooldown = new Map<string, number>()
   private lastTouchScan = 0
   private footsteps: { x: number; y: number; until: number }[] = []
   private lastFootstep = new Map<string, number>()
+  private wornPaths = new Map<string, Map<number, number>>() // channel -> tileIdx -> heat
+  private observedTouches = new Map<string, number>() // "a>b" -> ts
+  private critter: { x: number; y: number; vx: number; vy: number; kind: number; nextTurn: number } | null = null
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
   private spriteSets = new Map<string, SpriteSet>()
@@ -186,6 +191,7 @@ export class App {
         },
         onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
         onTouch: (fromNick, ts, sig) => this.onTouchIn(fromNick, ts, sig),
+        onTouchObserved: (fromNick, toNick) => this.onTouchObserved(fromNick, toNick),
       })
     } else {
       this.conn = new TownConnection({ ...common, serverUrl: this.townUrl() })
@@ -271,6 +277,13 @@ export class App {
       void this.decryptVisible()
     }
     this.updateInspectorMeta()
+    // passport: a real visit to a real channel stamps the journal
+    if (this.identity && this.journal.stamp(channel, Date.now())) {
+      const n = this.journal.stampCount()
+      this.toast(`📍 stamped ${channel} — ${n} ${n === 1 ? 'place' : 'places'} (${explorerTitle(n)})`)
+    }
+    // fresh room, fresh critter
+    this.critter = null
   }
 
   private onDurable(durable: DurableEvent, live: boolean): void {
@@ -301,6 +314,16 @@ export class App {
         this.addBubbleFor(msg.sender, msg.content, msg.type === 'code' ? 'code' : 'text')
         this.audio.speechBlip(msg.sender)
         if (this.identity && this.mentionsMe(msg.content)) this.audio.stinger('mention')
+        // rekindling: our own message breaking >24h of silence in this room
+        if (this.identity && msg.sender === this.identity.did) {
+          const prior = this.log.filter((e) => e.kind === 'message' && e.event.id !== msg.id)
+          const prev = prior.length ? prior[prior.length - 1]! : null
+          if (prev?.kind === 'message' && shouldRekindle(msg.ts, prev.event.ts) && this.journal.rekindle(msg.channel)) {
+            this.toast(`🔥 you rekindled ${msg.channel} — first words here in over a day`)
+            this.audio.stinger('spark')
+            this.updateSparkHud()
+          }
+        }
       }
     }
     if (durable.kind === 'reaction' && live) {
@@ -952,6 +975,7 @@ export class App {
       if (r.animation === 'walk') this.dropFootstep(did, r.x, r.y, now)
     }
     this.scanForTouches(now)
+    this.updateCritter(dt)
     this.bubbles = this.bubbles.filter((b) => b.until > now)
     this.emotes = this.emotes.filter((e) => e.until > now)
     this.footsteps = this.footsteps.filter((f) => f.until > now)
@@ -964,6 +988,55 @@ export class App {
     this.lastFootstep.set(key, now)
     this.footsteps.push({ x: x + (Math.random() - 0.5) * 0.4, y, until: now + 900 })
     if (this.footsteps.length > 220) this.footsteps.shift()
+    // worn paths: this session's traffic wears the floor
+    if (this.map) {
+      const idx = Math.floor(y) * this.map.width + Math.floor(x)
+      let heat = this.wornPaths.get(this.channel)
+      if (!heat) {
+        heat = new Map()
+        this.wornPaths.set(this.channel, heat)
+      }
+      heat.set(idx, Math.min(60, (heat.get(idx) ?? 0) + 1))
+    }
+  }
+
+  /** The room's small resident: deterministic per channel, scatters from players. */
+  private updateCritter(dt: number): void {
+    if (!this.map) return
+    if (!this.critter) {
+      let h = 0
+      for (const c of this.channel) h = (h * 33 + c.charCodeAt(0)) | 0
+      this.critter = {
+        x: 3 + (Math.abs(h) % (this.map.width - 6)),
+        y: 3 + (Math.abs(h >> 4) % (this.map.height - 6)),
+        vx: 0,
+        vy: 0,
+        kind: Math.abs(h) % 4,
+        nextTurn: 0,
+      }
+    }
+    const cr = this.critter
+    const now = performance.now()
+    const dToMe = Math.hypot(cr.x - this.me.x, cr.y - this.me.y)
+    if (dToMe < 2.5) {
+      // scatter away from the approaching player
+      const away = Math.atan2(cr.y - this.me.y, cr.x - this.me.x)
+      cr.vx = Math.cos(away) * 5
+      cr.vy = Math.sin(away) * 5
+      cr.nextTurn = now + 600
+    } else if (now > cr.nextTurn) {
+      cr.nextTurn = now + 1500 + Math.random() * 2500
+      const wander = Math.random() * Math.PI * 2
+      const speed = Math.random() < 0.5 ? 0 : 0.7
+      cr.vx = Math.cos(wander) * speed
+      cr.vy = Math.sin(wander) * speed
+    }
+    const nx = cr.x + cr.vx * dt
+    const ny = cr.y + cr.vy * dt
+    if (isWalkable(this.map, nx, cr.y)) cr.x = nx
+    else cr.vx = -cr.vx
+    if (isWalkable(this.map, cr.x, ny)) cr.y = ny
+    else cr.vy = -cr.vy
   }
 
   private draw(): void {
@@ -1062,6 +1135,33 @@ export class App {
       if (near) ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + 8))
     })
 
+    // worn paths: traffic subtly lightens the floor it crosses
+    const heat = this.wornPaths.get(this.channel)
+    if (heat) {
+      for (const [idx, n] of heat) {
+        if (n < 3) continue
+        const hx = (idx % this.map.width) * TILE_PX - cam.x
+        const hy = Math.floor(idx / this.map.width) * TILE_PX - cam.y
+        if (hx < -TILE_PX || hy < -TILE_PX || hx > VIEW_W || hy > VIEW_H) continue
+        ctx.fillStyle = `rgba(255,250,235,${Math.min(0.07, n * 0.0015).toFixed(4)})`
+        ctx.fillRect(hx, hy, TILE_PX, TILE_PX)
+      }
+    }
+
+    // the room's critter
+    if (this.critter) {
+      const cx = this.critter.x * TILE_PX - cam.x
+      const cy = this.critter.y * TILE_PX - cam.y
+      const colors = ['#c9a227', '#9aa7b5', '#b78bd6', '#7fc98f']
+      ctx.fillStyle = colors[this.critter.kind]!
+      const scurry = Math.abs(this.critter.vx) + Math.abs(this.critter.vy) > 1
+      ctx.fillRect(Math.round(cx), Math.round(cy - 2), 3, 2)
+      ctx.fillRect(Math.round(cx + (scurry ? 3 : 2)), Math.round(cy - 3), 2, 2) // head
+      if (this.critter.kind === 1 && Math.sin(performance.now() / 120) > 0) {
+        ctx.fillRect(Math.round(cx + 1), Math.round(cy - 4), 1, 1) // pigeon flutter
+      }
+    }
+
     // footstep dust
     const nowMs = performance.now()
     for (const f of this.footsteps) {
@@ -1100,6 +1200,17 @@ export class App {
       if (!target) continue
       const age = 1 - (e.until - performance.now()) / 1800
       ctx.fillText(e.emoji, target.x * TILE_PX - cam.x - 4, (target.y - 3) * TILE_PX - cam.y - age * 8)
+    }
+
+    // time of day breathes through the palette (local clock, subtle)
+    const hour = new Date().getHours() + new Date().getMinutes() / 60
+    let tint: string | null = null
+    if (hour >= 5 && hour < 8) tint = `rgba(255,190,120,${(0.09 * (1 - Math.abs(hour - 6.5) / 1.5)).toFixed(3)})`
+    else if (hour >= 17 && hour < 21) tint = `rgba(190,110,200,${(0.10 * (1 - Math.abs(hour - 19) / 2)).toFixed(3)})`
+    else if (hour >= 21 || hour < 5) tint = 'rgba(40,60,140,0.10)'
+    if (tint) {
+      ctx.fillStyle = tint
+      ctx.fillRect(0, 0, VIEW_W, VIEW_H)
     }
   }
 
@@ -1204,6 +1315,14 @@ export class App {
   // ---------- direct messages (real IRC PRIVMSGs, spec §6.5 private encounters) ----------
 
   private onDmIn(fromNick: string, text: string, ts: number): void {
+    // courier stars: an agent's verified quest completion carries ⭐s
+    if (/quest complete/i.test(text)) {
+      const stars = (text.match(/⭐/g) ?? []).length || 1
+      this.journal.addStars(stars)
+      this.updateSparkHud()
+      this.toast(`${'⭐'.repeat(stars)} courier run complete — ${this.journal.stars()} stars`)
+      this.audio.stinger('spark')
+    }
     const key = fromNick.toLowerCase()
     const thread = this.dmThreads.get(key) ?? []
     thread.push({ from: fromNick, text, self: false, ts })
@@ -1252,7 +1371,8 @@ export class App {
   // ---------- sparks: unique players touched (signed autographs) ----------
 
   private updateSparkHud(): void {
-    el('spark-hud').textContent = `✦ ${this.sparks.count()}`
+    const stars = this.journal.stars()
+    el('spark-hud').textContent = `✦ ${this.sparks.count()}${stars ? ` ⭐ ${stars}` : ''}`
   }
 
   private earnSpark(name: string): void {
@@ -1343,6 +1463,31 @@ export class App {
     }
   }
 
+  /** Introductions: two people first-touch each other while standing with you. */
+  private onTouchObserved(fromNick: string, toNick: string): void {
+    if (!this.identity) return
+    const now = Date.now()
+    const key = `${fromNick.toLowerCase()}>${toNick.toLowerCase()}`
+    const reverse = `${toNick.toLowerCase()}>${fromNick.toLowerCase()}`
+    this.observedTouches.set(key, now)
+    for (const [k, t] of this.observedTouches) if (now - t > 30_000) this.observedTouches.delete(k)
+    if (!this.observedTouches.has(reverse)) return
+    // both directions witnessed — were they both near us?
+    const findByNick = (nick: string) => [...this.members.values()].find((m) => (m.nick ?? m.display_name).toLowerCase() === nick.toLowerCase())
+    const a = findByNick(fromNick)
+    const b = findByNick(toNick)
+    if (!a || !b) return
+    const posOf = (did: string) => this.findPlayer(did)
+    const pa = posOf(a.did)
+    const pb = posOf(b.did)
+    const nearMe = (p: { x: number; y: number } | null) => p && Math.hypot(p.x - this.me.x, p.y - this.me.y) < 4.5
+    if (nearMe(pa) && nearMe(pb) && this.journal.introduce(a.did, b.did)) {
+      this.toast(`🤝 you introduced ${a.display_name} & ${b.display_name} — ${this.journal.introductions()} introductions`)
+      this.audio.stinger('spark')
+      this.updateSparkHud()
+    }
+  }
+
   private openSparkBook(): void {
     el('spark-count').textContent = String(this.sparks.count())
     el('spark-title').textContent = titleFor(this.sparks.count())
@@ -1352,8 +1497,9 @@ export class App {
       .slice(0, 60)
       .map(
         (e, i) =>
-          `<div style="text-align:center"><canvas id="spark-av-${i}" width="32" height="48" style="image-rendering:pixelated;border:1px solid var(--border)"></canvas>` +
-          `<div style="font-size:0.75rem">${e.verified ? '◈ ' : ''}${escapeHtml(e.name)}</div>` +
+          `<div style="text-align:center" class="spark-card" data-did="${escapeHtml(e.did)}" title="click to play their leitmotif">` +
+          `<canvas id="spark-av-${i}" width="32" height="48" style="image-rendering:pixelated;border:1px solid var(--border);cursor:pointer"></canvas>` +
+          `<div style="font-size:0.75rem">${e.verified ? '◈ ' : ''}${escapeHtml(e.name)} <span style="color:var(--cyan)">♪</span></div>` +
           `<div style="font-size:0.68rem;color:var(--dim)">${escapeHtml(e.channel)}</div></div>`,
       )
       .join('')
@@ -1361,6 +1507,22 @@ export class App {
       const canvas = document.getElementById(`spark-av-${i}`) as HTMLCanvasElement | null
       if (canvas) void drawPreview(e.did, canvas)
     })
+    // the music box: every soul you've met carries a tune
+    for (const card of grid.querySelectorAll<HTMLElement>('.spark-card')) {
+      card.addEventListener('click', () => void this.audio.playLeitmotif(card.dataset.did!))
+    }
+    // journal page: stamps + deeds
+    const stamps = this.journal.stamps()
+    el('journal-explorer').textContent = `${explorerTitle(this.journal.stampCount())} · ${this.journal.stampCount()} places`
+    el('journal-stamps').innerHTML = stamps
+      .slice(0, 40)
+      .map((s) => `<span style="border:1px solid var(--border);padding:1px 6px;margin:2px;display:inline-block;color:var(--cyan)">📍 ${escapeHtml(s.channel)}</span>`)
+      .join('')
+    el('journal-deeds').textContent = [
+      this.journal.stars() ? `⭐ ${this.journal.stars()} courier stars` : null,
+      this.journal.rekindled() ? `🔥 ${this.journal.rekindled()} rooms rekindled` : null,
+      this.journal.introductions() ? `🤝 ${this.journal.introductions()} introductions` : null,
+    ].filter(Boolean).join(' · ') || 'no deeds yet — ask the cartographer for a quest'
     el('sparkbook').classList.remove('hidden')
   }
 

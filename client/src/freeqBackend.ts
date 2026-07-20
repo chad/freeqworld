@@ -27,6 +27,8 @@ export interface BackendOptions {
   onDm?: (fromNick: string, text: string, ts: number) => void
   /** a signed world-touch addressed to us arrived (spark exchange) */
   onTouch?: (fromNick: string, ts: number, sig: string) => void
+  /** any world-touch between two OTHER people we witnessed (for introductions) */
+  onTouchObserved?: (fromNick: string, toNick: string) => void
 }
 
 interface TrackedMember {
@@ -213,6 +215,8 @@ export class FreeqBackend {
         const touch = decodeTouchTag(touchValue)
         if (touch && touch.toNick.toLowerCase() === this.client.nick.toLowerCase()) {
           this.opts.onTouch?.(nickFrom, touch.ts, touch.sig)
+        } else if (touch) {
+          this.opts.onTouchObserved?.(nickFrom, touch.toNick)
         }
       }
       const value = parsed.tags[POS_TAG] ?? parsed.tags[POS_TAG.slice(1)]
