@@ -17,7 +17,7 @@ import type {
   WorldPosition,
 } from '../../shared/src/protocol'
 import { didFromPublicKey, keypairFromSeed, signEvent, verifyEvent, type Keypair } from '../../shared/src/signing'
-import { LAUNCH_ROOMS } from '../../shared/src/world'
+import { generateTilemap, isWalkable, LAUNCH_ROOMS, type Tilemap } from '../../shared/src/world'
 import { agentSeed, createAgents, type AgentDef } from './agents'
 
 export interface Connection {
@@ -127,6 +127,54 @@ export class Town {
 
   getAgents(): AgentDef[] {
     return this.agents
+  }
+
+  private tilemaps = new Map<string, Tilemap>()
+
+  private tilemapFor(channel: string): Tilemap | null {
+    let map = this.tilemaps.get(channel)
+    if (!map) {
+      const room = LAUNCH_ROOMS.find((r) => r.channel === channel)
+      if (!room) return null
+      map = generateTilemap(room)
+      this.tilemaps.set(channel, map)
+    }
+    return map
+  }
+
+  /** Agents inhabit their rooms as slowly wandering NPCs (spec §3.1, §10.1). */
+  getAgentPositions(channel: string): WorldPosition[] {
+    const map = this.tilemapFor(channel)
+    if (!map) return []
+    const now = this.now()
+    const out: WorldPosition[] = []
+    const inhabitants = this.agents.filter((a) => a.channels.includes(channel))
+    inhabitants.forEach((agent, i) => {
+      const phase = now / 4000 + i * 2.4
+      const anchorX = map.spawn[0] + Math.cos(i * 2.1) * 4
+      const anchorY = map.spawn[1] - 2 + Math.sin(i * 1.7) * 2
+      let x = anchorX + Math.cos(phase) * 2.2
+      let y = anchorY + Math.sin(phase * 0.7) * 1.6
+      if (!isWalkable(map, x, y)) {
+        x = map.spawn[0] + 0.5
+        y = map.spawn[1] + 0.5
+      }
+      const dx = -Math.sin(phase)
+      const facing = Math.abs(dx) > 0.5 ? (dx > 0 ? 'east' : 'west') : Math.cos(phase * 0.7) > 0 ? 'south' : 'north'
+      out.push({
+        type: 'freeq.at/presence/world-position/v1',
+        channel,
+        did: agent.member.did,
+        x,
+        y,
+        facing,
+        animation: 'walk',
+        client_instance: 'npc',
+        sequence: Math.floor(now / 100),
+        expires_at: now + 10_000,
+      })
+    })
+    return out
   }
 
   townProfile(): TownProfile {
@@ -353,7 +401,7 @@ export class Town {
   flushPresence(): void {
     for (const [name, ch] of this.channels) {
       if (ch.conns.size === 0) continue
-      const positions = this.getPresence(name)
+      const positions = [...this.getPresence(name), ...this.getAgentPositions(name)]
       const frame: ServerFrame = { t: 'presence', channel: name, positions }
       for (const conn of ch.conns) conn.send(frame)
     }

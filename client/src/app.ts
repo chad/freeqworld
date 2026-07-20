@@ -687,7 +687,9 @@ export class App {
 
   private fitCanvas(): void {
     const wrap = el('worldwrap')
-    const scale = Math.max(1, Math.floor(Math.min(wrap.clientWidth / VIEW_W, wrap.clientHeight / VIEW_H)))
+    // integer scaling when practical (spec §12.1), half-steps when an integer wastes >35% of the panel
+    const raw = Math.min(wrap.clientWidth / VIEW_W, wrap.clientHeight / VIEW_H)
+    const scale = Math.max(1, Math.floor(raw * 2) / 2)
     this.canvas.style.width = `${VIEW_W * scale}px`
     this.canvas.style.height = `${VIEW_H * scale}px`
   }
@@ -732,37 +734,67 @@ export class App {
     const y0 = Math.floor(cam.y / TILE_PX)
     const x1 = Math.min(this.map.width, x0 + VIEW_W / TILE_PX + 2)
     const y1 = Math.min(this.map.height, y0 + VIEW_H / TILE_PX + 2)
+    const tileAt = (x: number, y: number) => (x < 0 || y < 0 || x >= this.map!.width || y >= this.map!.height ? TILE.WALL : this.map!.tiles[y * this.map!.width + x]!)
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
-        const t = this.map.tiles[y * this.map.width + x]!
+        const t = tileAt(x, y)
         const sx = x * TILE_PX - cam.x
         const sy = y * TILE_PX - cam.y
-        ctx.fillStyle =
-          t === TILE.WALL ? pal.wall : t === TILE.RUG ? pal.rug : t === TILE.DOOR ? '#101018' : t === TILE.DECOR ? pal.decor : t === TILE.GLOW ? pal.glow : pal.floor
+        if (t === TILE.WALL) {
+          // walls get a lit south face where they meet the floor
+          const faceBelow = tileAt(x, y + 1) !== TILE.WALL
+          ctx.fillStyle = shade(pal.wall, faceBelow ? 1.35 : 0.75)
+          ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
+          if (faceBelow) {
+            ctx.fillStyle = shade(pal.wall, 0.5)
+            ctx.fillRect(sx, sy, TILE_PX, 2)
+          }
+          continue
+        }
+        ctx.fillStyle = t === TILE.RUG ? pal.rug : t === TILE.GLOW ? shade(pal.glow, 0.35) : t === TILE.DOOR ? '#0c0c14' : t === TILE.DECOR ? pal.floor : pal.floor
         ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
         if (t === TILE.FLOOR && (x + y) % 2 === 0) {
-          ctx.fillStyle = 'rgba(255,255,255,0.02)'
+          ctx.fillStyle = 'rgba(255,255,255,0.025)'
           ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
+        }
+        if (t === TILE.GLOW) {
+          ctx.fillStyle = pal.glow
+          ctx.fillRect(sx + 2, sy + 2, 4, 4)
+        }
+        if (t === TILE.DECOR) {
+          // incidental furniture: crate/plant block with outline
+          ctx.fillStyle = shade(pal.decor, 0.55)
+          ctx.fillRect(sx, sy + 1, TILE_PX, TILE_PX - 1)
+          ctx.fillStyle = pal.decor
+          ctx.fillRect(sx + 1, sy - 1, TILE_PX - 2, 5)
         }
         if (t === TILE.DOOR) {
           ctx.fillStyle = pal.glow
-          ctx.fillRect(sx + 3, sy + 3, 2, 2)
+          ctx.fillRect(sx + 1, sy, 1, TILE_PX)
+          ctx.fillRect(sx + TILE_PX - 2, sy, 1, TILE_PX)
         }
       }
     }
 
-    // objects
+    // objects: distinct furniture with accent tops and glyphs
     ctx.font = '7px monospace'
     for (const o of room.objects) {
       const sx = o.position[0] * TILE_PX - cam.x
       const sy = o.position[1] * TILE_PX - cam.y
-      if (sx < -TILE_PX || sy < -TILE_PX || sx > VIEW_W || sy > VIEW_H) continue
+      if (sx < -TILE_PX * 2 || sy < -TILE_PX * 2 || sx > VIEW_W || sy > VIEW_H) continue
+      ctx.fillStyle = '#0e0e16'
+      ctx.fillRect(sx - 1, sy - 6, TILE_PX + 2, TILE_PX + 6)
+      ctx.fillStyle = shade(pal.decor, 1.15)
+      ctx.fillRect(sx, sy - 5, TILE_PX, TILE_PX + 4)
       ctx.fillStyle = pal.glow
-      ctx.fillRect(sx + 1, sy - 3, TILE_PX - 2, 3)
+      ctx.fillRect(sx, sy - 5, TILE_PX, 2)
+      ctx.fillStyle = '#0e0e16'
+      const glyph = o.type.includes('terminal') || o.type.includes('console') ? '>' : o.type.includes('board') ? '≡' : o.type.includes('music') || o.type.includes('stage') ? '♪' : o.type.includes('map') ? '✦' : o.type.includes('key') ? '⚿' : '□'
+      ctx.fillText(glyph, sx + 2, sy + 3)
       const near = Math.hypot(o.position[0] + 0.5 - this.me.x, o.position[1] + 0.5 - this.me.y) < 1.7
       if (near) {
         ctx.fillStyle = '#ffd166'
-        ctx.fillText(`${o.label} [space]`, sx - 10, sy - 6)
+        ctx.fillText(`${o.label} [space]`, sx - 10, sy - 8)
       }
     }
 
@@ -878,6 +910,13 @@ export class App {
     document.body.appendChild(t)
     setTimeout(() => t.remove(), 3200)
   }
+}
+
+function shade(hex: string, factor: number): string {
+  const r = Math.min(255, Math.round(parseInt(hex.slice(1, 3), 16) * factor))
+  const g = Math.min(255, Math.round(parseInt(hex.slice(3, 5), 16) * factor))
+  const b = Math.min(255, Math.round(parseInt(hex.slice(5, 7), 16) * factor))
+  return `rgb(${r},${g},${b})`
 }
 
 function escapeHtml(s: string): string {
