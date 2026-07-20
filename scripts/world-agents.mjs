@@ -124,8 +124,19 @@ for (const [i, agent] of AGENTS.entries()) {
   })
 
   // courier quests: issued over DM, completed by saying the phrase in the
-  // real target channel — the agent is a member there and verifies for real
+  // real target channel — the agent is a member there and verifies for real.
+  // Pending quests persist to disk so an agent restart never eats a delivery.
+  const questPath = join(SEED_DIR, `quests-${agent.nick}.json`)
   const quests = new Map() // nickLower -> { phrase, target, bonus }
+  try {
+    if (existsSync(questPath)) {
+      for (const [k, v] of Object.entries(JSON.parse(readFileSync(questPath, 'utf8')))) quests.set(k, v)
+      if (quests.size) console.log(`[${agent.nick}] restored ${quests.size} pending quest(s)`)
+    }
+  } catch { /* fresh ledger */ }
+  const saveQuests = () => {
+    try { writeFileSync(questPath, JSON.stringify(Object.fromEntries(quests))) } catch { /* disk hiccup */ }
+  }
   const AGENT_NICKS = AGENTS.map((a) => a.nick)
   const issueQuest = (nick, viaDm = false) => {
     // quieter rooms pay double — couriers carry life where there is none
@@ -134,6 +145,8 @@ for (const [i, agent] of AGENTS.entries()) {
     const bonus = (history.get(target)?.length ?? 0) < 5
     const phrase = `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
     quests.set(nick.toLowerCase(), { phrase, target, bonus })
+    saveQuests()
+    console.log(`[${agent.nick}] quest issued: ${nick} -> ${target} (${phrase}${bonus ? ', x2' : ''})`)
     const brief = `COURIER RUN for ${nick}: carry this sealed phrase to ${target} and say it aloud: ${phrase} — i keep a post there and will confirm the delivery myself.${bonus ? ' that room is quiet; the run pays double.' : ''}`
     if (!viaDm) client.sendMessage(nick, brief)
     return brief
@@ -172,13 +185,29 @@ for (const [i, agent] of AGENTS.entries()) {
 
     // quest completion: the right courier says the right phrase in the right room
     const quest = quests.get(msg.from.toLowerCase())
-    if (quest && ch === quest.target && msg.text.includes(quest.phrase)) {
+    if (quest && ch === quest.target && msg.text.toUpperCase().includes(quest.phrase.toUpperCase())) {
       quests.delete(msg.from.toLowerCase())
+      saveQuests()
+      console.log(`[${agent.nick}] quest complete: ${msg.from} delivered ${quest.phrase} in ${ch}`)
       const stars = quest.bonus ? '⭐⭐' : '⭐'
       setTimeout(() => {
         client.sendMessage(ch, `${stars} delivery confirmed — ${msg.from} carried ${quest.phrase} across the network${quest.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`)
         client.sendMessage(msg.from, `quest complete, ${msg.from}. ${stars} say "quest" whenever you want another run.`)
       }, 700)
+      return
+    }
+    // a sealed phrase with no matching ledger entry (wrong room, or issued
+    // before a restart in the days before the ledger persisted): own it
+    if (agent.nick === 'cartographer' && /PKT-[A-Z0-9]{4}/i.test(msg.text)) {
+      const pending = quests.get(msg.from.toLowerCase())
+      const last = lastReply.get(`lost:${msg.from}`) ?? 0
+      if (Date.now() - last > 30_000) {
+        lastReply.set(`lost:${msg.from}`, Date.now())
+        const hint = pending
+          ? `that envelope goes to ${pending.target}, ${msg.from} — say ${pending.phrase} there and i will confirm it.`
+          : `that envelope isn't in my ledger, ${msg.from} — my fault, not yours. say "quest" and i will cut you a fresh one.`
+        setTimeout(() => client.sendMessage(ch, hint), 700)
+      }
       return
     }
 
