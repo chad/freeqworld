@@ -12,6 +12,7 @@ import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, resolveBlueskyHandle, type Identity } from './identity'
 import { TownConnection } from './net'
 import { drawPreview, spriteFor, type SpriteSet } from './sprites'
+import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
 
@@ -86,6 +87,11 @@ export class App {
   private travelUrl: string | null = null
   private dmThreads = new Map<string, { from: string; text: string; self: boolean; ts: number }[]>()
   private activeDm: string | null = null
+  private sparks = new SparkBook()
+  private touchCooldown = new Map<string, number>()
+  private lastTouchScan = 0
+  private footsteps: { x: number; y: number; until: number }[] = []
+  private lastFootstep = new Map<string, number>()
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
   private spriteSets = new Map<string, SpriteSet>()
@@ -94,6 +100,7 @@ export class App {
     this.canvas.width = VIEW_W
     this.canvas.height = VIEW_H
     this.fitCanvas()
+    this.updateSparkHud()
     window.addEventListener('resize', () => this.fitCanvas())
     this.bindUi()
     this.identity = loadIdentity()
@@ -178,6 +185,7 @@ export class App {
           this.updateInspectorMeta()
         },
         onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
+        onTouch: (fromNick, ts, sig) => this.onTouchIn(fromNick, ts, sig),
       })
     } else {
       this.conn = new TownConnection({ ...common, serverUrl: this.townUrl() })
@@ -326,6 +334,8 @@ export class App {
       if (isNew && !silent) {
         this.transcriptSystem(`${member.display_name} arrived`)
         void this.audio.playLeitmotif(member.avatar_did ?? member.did)
+        // arrival puff at wherever they materialize
+        this.emotes.push({ did: member.did, emoji: '✧', until: performance.now() + 1400 })
       }
     } else {
       this.members.delete(member.did)
@@ -593,6 +603,8 @@ export class App {
     el('travel-go').addEventListener('click', () => this.confirmTravel())
     el('gate-later').addEventListener('click', () => el('gate').classList.add('hidden'))
     el('dm-close').addEventListener('click', () => el('dmpanel').classList.add('hidden'))
+    el('spark-hud').addEventListener('click', () => this.openSparkBook())
+    el('sparkbook-close').addEventListener('click', () => el('sparkbook').classList.add('hidden'))
     el<HTMLInputElement>('dm-input').addEventListener('keydown', (e) => {
       e.stopPropagation()
       if (e.key === 'Enter') this.sendDm()
@@ -659,11 +671,13 @@ export class App {
       if (this.lastMessageId && this.conn) this.conn.sendReaction(this.channel, this.lastMessageId, '👍')
     } else if (k === 'g') {
       this.openDirectory()
+    } else if (k === 'b') {
+      this.openSparkBook()
     } else if (k === ' ') {
       this.interact()
       e.preventDefault()
     } else if (e.key === 'Escape') {
-      for (const id of ['idcard', 'objcard', 'travel']) el(id).classList.add('hidden')
+      for (const id of ['idcard', 'objcard', 'travel', 'sparkbook']) el(id).classList.add('hidden')
     }
   }
 
@@ -931,14 +945,25 @@ export class App {
     const dt = Math.min(0.05, (now - this.lastFrameTime) / 1000)
     this.lastFrameTime = now
     this.updateMovement(dt)
-    for (const r of this.remotes.values()) {
+    if (this.me.moving) this.dropFootstep('me', this.me.x, this.me.y, now)
+    for (const [did, r] of this.remotes) {
       r.x += (r.tx - r.x) * Math.min(1, dt * 12)
       r.y += (r.ty - r.y) * Math.min(1, dt * 12)
+      if (r.animation === 'walk') this.dropFootstep(did, r.x, r.y, now)
     }
+    this.scanForTouches(now)
     this.bubbles = this.bubbles.filter((b) => b.until > now)
     this.emotes = this.emotes.filter((e) => e.until > now)
+    this.footsteps = this.footsteps.filter((f) => f.until > now)
     this.draw()
     requestAnimationFrame(() => this.frame())
+  }
+
+  private dropFootstep(key: string, x: number, y: number, now: number): void {
+    if ((this.lastFootstep.get(key) ?? 0) > now - 180) return
+    this.lastFootstep.set(key, now)
+    this.footsteps.push({ x: x + (Math.random() - 0.5) * 0.4, y, until: now + 900 })
+    if (this.footsteps.length > 220) this.footsteps.shift()
   }
 
   private draw(): void {
@@ -1037,6 +1062,14 @@ export class App {
       if (near) ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + 8))
     })
 
+    // footstep dust
+    const nowMs = performance.now()
+    for (const f of this.footsteps) {
+      const alpha = Math.max(0, (f.until - nowMs) / 900) * 0.22
+      ctx.fillStyle = `rgba(230,230,255,${alpha.toFixed(3)})`
+      ctx.fillRect(Math.round(f.x * TILE_PX - cam.x), Math.round(f.y * TILE_PX - cam.y + 2), 2, 1)
+    }
+
     // remote players, parked members, then me (draw order by y)
     const drawables: { x: number; y: number; did: string; facing: WorldPosition['facing']; moving: boolean; me: boolean; parked?: boolean }[] = []
     for (const r of this.remotes.values()) {
@@ -1129,7 +1162,14 @@ export class App {
       void spriteFor(spriteDid).then((s) => this.spriteSets.set(spriteDid, s))
     }
     const sx = d.x * TILE_PX - cam.x
-    const sy = d.y * TILE_PX - cam.y
+    // idle life: everyone breathes on their own DID-phased rhythm
+    let idleBob = 0
+    if (!d.moving) {
+      let h = 0
+      for (const c of d.did) h = (h * 31 + c.charCodeAt(0)) | 0
+      idleBob = Math.sin(performance.now() / 700 + (h % 100)) > 0.75 ? 1 : 0
+    }
+    const sy = d.y * TILE_PX - cam.y + idleBob
     const frame = d.moving ? (Math.floor(this.walkPhase) % 2 === 0 ? 1 : 2) : 0
     if (set) {
       const img = set.frames.get(`${d.facing}:${frame}`)!
@@ -1209,6 +1249,121 @@ export class App {
     this.renderDm()
   }
 
+  // ---------- sparks: unique players touched (signed autographs) ----------
+
+  private updateSparkHud(): void {
+    el('spark-hud').textContent = `✦ ${this.sparks.count()}`
+  }
+
+  private earnSpark(name: string): void {
+    const count = this.sparks.count()
+    this.updateSparkHud()
+    this.toast(`✦ spark: ${name} — ${count} unique ${count === 1 ? 'soul' : 'souls'} touched (${titleFor(count)})`)
+    this.audio.stinger('spark')
+  }
+
+  /** Runs a few times a second: touching someone for the first time collects them. */
+  private scanForTouches(now: number): void {
+    if (!this.identity || now - this.lastTouchScan < 400) return
+    this.lastTouchScan = now
+    const near = (x: number, y: number) => Math.hypot(x - this.me.x, y - this.me.y) < 1.35
+    // live players: exchange signed autographs over TAGMSG
+    for (const [did, r] of this.remotes) {
+      if (!near(r.x, r.y)) continue
+      const member = this.members.get(did)
+      if (!member) continue
+      const cooldownKey = `live:${did}`
+      if ((this.touchCooldown.get(cooldownKey) ?? 0) > now) continue
+      this.touchCooldown.set(cooldownKey, now + 15_000)
+      const isNew = this.sparks.add({
+        did,
+        nick: member.nick ?? member.display_name,
+        name: member.display_name,
+        channel: this.channel,
+        ts: Date.now(),
+        verified: false,
+        selfDid: this.identity.did,
+      })
+      if (isNew) this.earnSpark(member.display_name)
+      // send our signed side regardless — it lets their book verify us,
+      // and their reply upgrades our entry to a verified autograph
+      const conn = this.conn
+      if (conn && 'sendTouch' in conn && member.nick) {
+        const ts = Date.now()
+        const sig = signTouch(this.identity.did, did, ts, this.identity.keypair.secretKey)
+        ;(conn as FreeqBackend).sendTouch(this.channel, member.nick, ts, sig)
+      }
+    }
+    // parked members (conventional clients): an unsigned brush past
+    for (const m of this.members.values()) {
+      if (m.did === this.identity.did || this.remotes.has(m.did)) continue
+      const spot = this.parkedSpot(m.did)
+      if (!spot || !near(spot.x, spot.y)) continue
+      const isNew = this.sparks.add({
+        did: m.did,
+        nick: m.nick ?? m.display_name,
+        name: m.display_name,
+        channel: this.channel,
+        ts: Date.now(),
+        verified: false,
+        selfDid: this.identity.did,
+      })
+      if (isNew) this.earnSpark(m.display_name)
+    }
+  }
+
+  /** Someone touched us: verify their signature and reciprocate once. */
+  private onTouchIn(fromNick: string, ts: number, sig: string): void {
+    if (!this.identity) return
+    const member = [...this.members.values()].find((m) => (m.nick ?? m.display_name).toLowerCase() === fromNick.toLowerCase())
+    if (!member) return
+    const verified = verifyTouch(member.did, this.identity.did, ts, sig)
+    const isNew = this.sparks.add({
+      did: member.did,
+      nick: fromNick,
+      name: member.display_name,
+      channel: this.channel,
+      ts,
+      verified,
+      sig: verified ? sig : undefined,
+      selfDid: this.identity.did,
+    })
+    if (isNew) this.earnSpark(member.display_name)
+    else this.updateSparkHud()
+    // reciprocate so their side gets a verified autograph too (cooldown-guarded)
+    const cooldownKey = `reply:${member.did}`
+    const now = performance.now()
+    if ((this.touchCooldown.get(cooldownKey) ?? 0) > now) return
+    this.touchCooldown.set(cooldownKey, now + 15_000)
+    const conn = this.conn
+    if (conn && 'sendTouch' in conn) {
+      const myTs = Date.now()
+      const mySig = signTouch(this.identity.did, member.did, myTs, this.identity.keypair.secretKey)
+      ;(conn as FreeqBackend).sendTouch(this.channel, fromNick, myTs, mySig)
+    }
+  }
+
+  private openSparkBook(): void {
+    el('spark-count').textContent = String(this.sparks.count())
+    el('spark-title').textContent = titleFor(this.sparks.count())
+    const grid = el('spark-grid')
+    grid.innerHTML = this.sparks
+      .entries()
+      .slice(0, 60)
+      .map(
+        (e, i) =>
+          `<div style="text-align:center"><canvas id="spark-av-${i}" width="32" height="48" style="image-rendering:pixelated;border:1px solid var(--border)"></canvas>` +
+          `<div style="font-size:0.75rem">${e.verified ? '◈ ' : ''}${escapeHtml(e.name)}</div>` +
+          `<div style="font-size:0.68rem;color:var(--dim)">${escapeHtml(e.channel)}</div></div>`,
+      )
+      .join('')
+    this.sparks.entries().slice(0, 60).forEach((e, i) => {
+      const canvas = document.getElementById(`spark-av-${i}`) as HTMLCanvasElement | null
+      if (canvas) void drawPreview(e.did, canvas)
+    })
+    el('sparkbook').classList.remove('hidden')
+  }
+
   // ---------- test hook (used by the e2e suite; harmless in production) ----------
 
   testHook(): Record<string, unknown> {
@@ -1222,6 +1377,7 @@ export class App {
         members: [...this.members.values()].map((m) => m.display_name),
         remotes: this.remotes.size,
         backend: this.backendKind(),
+        sparks: this.sparks.count(),
       }),
       teleport: (x: number, y: number) => {
         this.me.x = x

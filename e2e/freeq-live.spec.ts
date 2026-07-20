@@ -70,6 +70,15 @@ test.describe('live against irc.freeq.at (spec 4.1: the protocol is real)', () =
     await expect(a.getByTestId('transcript')).toContainText(line, { timeout: 20_000 })
     await expect(b.getByTestId('transcript')).toContainText(line, { timeout: 20_000 })
 
+    // sparks: both spawned on the same tile, so first-touch autographs
+    // exchange over TAGMSG — each collects the other as a unique contact
+    await expect
+      .poll(async () => (await hookState(a)).sparks, { timeout: 25_000 })
+      .toBeGreaterThanOrEqual(1)
+    await expect
+      .poll(async () => (await hookState(b)).sparks, { timeout: 25_000 })
+      .toBeGreaterThanOrEqual(1)
+
     // spatial presence rides ephemeral TAGMSG: A walks, B sees a moving avatar
     await a.getByTestId('world-canvas').click({ position: { x: 30, y: 30 } })
     await a.keyboard.down('d')

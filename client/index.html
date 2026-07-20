@@ -126,6 +126,7 @@
       <span class="loc" data-testid="header-loc">—</span>
       <span class="topic" data-testid="header-topic"></span>
       <span id="vault-status" class="vstat hidden" data-testid="vault-status"></span>
+      <span id="spark-hud" data-testid="spark-hud" title="unique souls touched — click for your collection" style="color: var(--amber); cursor: pointer;">✦ 0</span>
       <span class="modes">
         <button id="mode-world" title="World only">World</button>
         <button id="mode-split" class="active" title="World + transcript">Split</button>
@@ -191,6 +192,16 @@
             <div class="field hidden" id="idcard-caps-row"><b>capabilities</b> <span id="idcard-caps"></span></div>
             <button id="idcard-dm" data-testid="idcard-dm" class="primary hidden">💬 Direct message</button>
             <button id="idcard-close">Close</button>
+          </div>
+        </div>
+        <div id="sparkbook" class="overlay hidden" data-testid="spark-book">
+          <div class="card" style="min-width:420px; max-width:560px">
+            <h1 style="font-size:1.1rem">✦ SPARKS</h1>
+            <div class="sub"><span id="spark-count">0</span> unique souls touched · title: <span id="spark-title" data-testid="spark-title">Stranger</span></div>
+            <div id="spark-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;max-height:320px;overflow-y:auto"></div>
+            <div class="hint">Walk into someone for the first time to collect them. Between two world
+            clients the touch is a signed autograph — ◈ marks a cryptographically verified contact.</div>
+            <button id="sparkbook-close">Close</button>
           </div>
         </div>
         <div id="objcard" class="overlay hidden" data-testid="object-card">

@@ -11,6 +11,7 @@ import type { ChatMessage, DurableEvent, MemberInfo, ServerFrame, WorldPosition 
 import { worldFromChannels, type ChannelEntry, type LiveWorld } from '../../shared/src/liveWorld'
 import type { Identity } from './identity'
 import { decodePosTag, encodePosTag, POS_TAG } from './posTag'
+import { decodeTouchTag, encodeTouchTag, TOUCH_TAG } from './sparks'
 
 export interface BackendOptions {
   serverUrl: string // wss://irc.freeq.at/irc
@@ -24,6 +25,8 @@ export interface BackendOptions {
   onAuth?: (did: string) => void
   /** a real IRC direct message arrived (peer nick, text, timestamp) */
   onDm?: (fromNick: string, text: string, ts: number) => void
+  /** a signed world-touch addressed to us arrived (spark exchange) */
+  onTouch?: (fromNick: string, ts: number, sig: string) => void
 }
 
 interface TrackedMember {
@@ -201,14 +204,22 @@ export class FreeqBackend {
       tracked.info = { ...tracked.info, did, verification_status: 'verified' }
       this.emit({ t: 'member', channel: this.channel, member: tracked.info, online: true, silent: true })
     })
-    // ephemeral spatial presence in
+    // ephemeral spatial presence + touch exchange in
     this.client.on('raw', (_line: string, parsed: { tags: Record<string, string>; prefix: string; command: string; params: string[] }) => {
       if (parsed.command !== 'TAGMSG') return
+      const nickFrom = parsed.prefix.split('!')[0] ?? ''
+      const touchValue = parsed.tags[TOUCH_TAG] ?? parsed.tags[TOUCH_TAG.slice(1)]
+      if (touchValue && nickFrom && nickFrom !== this.client.nick) {
+        const touch = decodeTouchTag(touchValue)
+        if (touch && touch.toNick.toLowerCase() === this.client.nick.toLowerCase()) {
+          this.opts.onTouch?.(nickFrom, touch.ts, touch.sig)
+        }
+      }
       const value = parsed.tags[POS_TAG] ?? parsed.tags[POS_TAG.slice(1)]
       if (!value) return
       const target = parsed.params[0]
       if (target !== this.channel) return
-      const nick = parsed.prefix.split('!')[0] ?? ''
+      const nick = nickFrom
       if (!nick || nick === this.client.nick) return
       const pos = decodePosTag(value)
       if (!pos) return
@@ -404,6 +415,11 @@ export class FreeqBackend {
   /** Real IRC direct message (PRIVMSG to a nick) — works with any client on the server. */
   sendDm(nick: string, text: string): void {
     this.client.sendMessage(nick, text)
+  }
+
+  /** Broadcast a signed touch (spark autograph) addressed to a nick in the room. */
+  sendTouch(channel: string, toNick: string, ts: number, sig: string): void {
+    this.client.sendTagmsg(channel, { [TOUCH_TAG]: encodeTouchTag(toNick, ts, sig) })
   }
 
   sendMessage(channel: string, content: string): void {

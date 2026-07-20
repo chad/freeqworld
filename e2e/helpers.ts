@@ -19,7 +19,7 @@ export async function enterAsGuest(page: Page, name: string, url = TOWN_A): Prom
   await page.getByTestId('member-list').filter({ hasText: name }).waitFor()
 }
 
-export async function hookState(page: Page): Promise<{ channel: string; town: string; did: string; x: number; y: number; members: string[]; remotes: number; backend: string }> {
+export async function hookState(page: Page): Promise<{ channel: string; town: string; did: string; x: number; y: number; members: string[]; remotes: number; backend: string; sparks: number }> {
   return page.evaluate(() => (window as any).__fimp.state())
 }
 
