@@ -17,6 +17,8 @@ export interface DirectoryEntry {
   users: number
   /** true when this came from the user's own recent conversations (CHATHISTORY TARGETS), not the public LIST */
   personal?: boolean
+  /** true for the server's home channel when LIST hides it (secret mode) */
+  unlisted?: boolean
 }
 
 export interface LiveWorld {
@@ -96,6 +98,7 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
   const channels = wellFormed.filter((e) => !isDebris(e.name))
   const hidden = wellFormed.length - channels.length
   const personal = new Set<string>()
+  const unlisted = new Set<string>()
   for (const name of opts.extraChannels ?? []) {
     if (!name.startsWith('#') || isDebris(name)) continue
     if (!channels.some((c) => c.name === name)) {
@@ -103,31 +106,62 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
       personal.add(name)
     }
   }
+  // the server's home channel belongs in the world even when LIST hides it
+  if (opts.home) {
+    const homeCh = `#${opts.home}`
+    if (!channels.some((c) => c.name === homeCh)) {
+      channels.push({ name: homeCh, topic: '', count: 0 })
+      unlisted.add(homeCh)
+    }
+  }
   if (channels.length === 0) {
     channels.push({ name: '#lobby', topic: '', count: 0 })
   }
   const sorted = [...channels].sort((a, b) => rank(b, opts.home) - rank(a, opts.home) || a.name.localeCompare(b.name))
   const spawn = sorted[0]!.name
-  const doorTargets = sorted.slice(1, 5).map((c) => c.name)
+
+  // districts: same-template channels form east/west rings
+  const templateOf = new Map<string, RoomTemplate>()
+  for (const c of sorted) {
+    templateOf.set(c.name, c.name === spawn ? 'plaza' : templateFor(c.name, c.topic))
+  }
+  const districts = new Map<RoomTemplate, string[]>()
+  for (const c of sorted) {
+    if (c.name === spawn) continue
+    const t = templateOf.get(c.name)!
+    const list = districts.get(t) ?? []
+    list.push(c.name)
+    districts.set(t, list)
+  }
+
+  const countOf = new Map(sorted.map((c) => [c.name, c.count]))
+  const doorLabel = (name: string) => {
+    const n = countOf.get(name) ?? 0
+    return unlisted.has(name) ? name : `${name} (${n})`
+  }
 
   const rooms: RoomManifest[] = sorted.map((c) => {
     const isPlaza = c.name === spawn
-    const template = isPlaza ? 'plaza' : templateFor(c.name, c.topic)
-    const width = Math.min(44, 18 + c.count * 4)
-    const height = Math.min(26, 12 + c.count * 2)
+    const template = templateOf.get(c.name)!
+    // secret home channels report no count — don't shrink the main hall for it
+    const sizeCount = unlisted.has(c.name) ? 5 : c.count
+    const width = Math.min(44, 18 + sizeCount * 4)
+    const height = Math.min(26, 12 + sizeCount * 2)
     const exits: RoomManifest['exits'] = []
     if (isPlaza) {
-      const dirs = ['north', 'east', 'south', 'west'] as const
-      doorTargets.forEach((target, i) => {
-        exits.push({ direction: dirs[i % 4]!, channel: target, label: target })
-      })
+      // the portal station: ranked arches along the north wall (spec §7.5)
+      for (const target of sorted.slice(1, 9).map((s) => s.name)) {
+        exits.push({ direction: 'north', channel: target, label: doorLabel(target) })
+      }
     } else {
       exits.push({ direction: 'south', channel: spawn, label: `Back to ${spawn}` })
-      // a second door to the next-ranked sibling makes the town walkable as a ring
-      const idx = sorted.findIndex((s) => s.name === c.name)
-      const next = sorted[(idx + 1) % sorted.length]!
-      if (next.name !== c.name && next.name !== spawn) {
-        exits.push({ direction: 'east', channel: next.name, label: next.name })
+      const district = districts.get(template)!
+      if (district.length > 1) {
+        const idx = district.indexOf(c.name)
+        const next = district[(idx + 1) % district.length]!
+        const prev = district[(idx - 1 + district.length) % district.length]!
+        if (next !== c.name) exits.push({ direction: 'east', channel: next, label: doorLabel(next) })
+        if (prev !== c.name && prev !== next) exits.push({ direction: 'west', channel: prev, label: doorLabel(prev) })
       }
     }
     const objects: RoomManifest['objects'] = []
@@ -163,7 +197,13 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
   return {
     rooms,
     spawn,
-    directory: sorted.map((c) => ({ channel: c.name, topic: c.topic, users: c.count, personal: personal.has(c.name) || undefined })),
+    directory: sorted.map((c) => ({
+      channel: c.name,
+      topic: c.topic,
+      users: c.count,
+      personal: personal.has(c.name) || undefined,
+      unlisted: unlisted.has(c.name) || undefined,
+    })),
     hidden,
   }
 }

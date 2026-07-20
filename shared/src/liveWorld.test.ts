@@ -66,6 +66,54 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
     expect(world.spawn).toBe('#freeq')
   })
 
+  it('inserts the home channel even when LIST hides it (secret channels)', () => {
+    const world = worldFromChannels(REAL_SAMPLE, { home: 'freeq' })
+    expect(world.spawn).toBe('#freeq')
+    const entry = world.directory.find((d) => d.channel === '#freeq')!
+    expect(entry.unlisted).toBe(true)
+    const room = world.rooms.find((r) => r.channel === '#freeq')!
+    expect(room.template).toBe('plaza')
+    expect(room.width).toBeGreaterThan(20) // the home room is not a closet just because LIST hides its count
+  })
+
+  it('turns the spawn room into a portal station: ranked arches on the north wall with live counts', () => {
+    const world = worldFromChannels(REAL_SAMPLE, { home: 'freeq' })
+    const plaza = world.rooms.find((r) => r.channel === world.spawn)!
+    const north = plaza.exits.filter((e) => e.direction === 'north')
+    expect(north.length).toBeGreaterThanOrEqual(4)
+    expect(north.length).toBeLessThanOrEqual(8)
+    // ranked: the first arch is the liveliest real channel
+    expect(north[0]!.channel).toBe('#general')
+    expect(north[0]!.label).toContain('#general')
+    expect(north[0]!.label).toContain('5') // live population in the label
+  })
+
+  it('links rooms into districts: same-template channels connect east/west', () => {
+    const world = worldFromChannels(
+      [
+        { name: '#general', topic: 'talk', count: 5 },
+        { name: '#dev', topic: 'freeq development', count: 5 },
+        { name: '#typescript', topic: '', count: 2 },
+        { name: '#nixos', topic: 'nix fixes this', count: 1 },
+        { name: '#music', topic: '', count: 3 },
+      ],
+      { home: 'freeq' },
+    )
+    const dev = world.rooms.find((r) => r.channel === '#dev')!
+    expect(dev.template).toBe('workshop')
+    const sideDoors = dev.exits.filter((e) => e.direction === 'east' || e.direction === 'west')
+    expect(sideDoors.length).toBeGreaterThanOrEqual(1) // #typescript/#nixos are its district
+    for (const door of sideDoors) {
+      const target = world.rooms.find((r) => r.channel === door.channel)!
+      expect(target.template).toBe('workshop') // district neighbors share a character
+    }
+    // and every room still has a door home
+    for (const room of world.rooms) {
+      if (room.channel === world.spawn) continue
+      expect(room.exits.some((e) => e.channel === world.spawn)).toBe(true)
+    }
+  })
+
   it('merges the user’s personal recent channels even when LIST hides them', () => {
     const world = worldFromChannels(REAL_SAMPLE, { extraChannels: ['#freeq', '#sekret-hq'] })
     const channels = world.rooms.map((r) => r.channel)

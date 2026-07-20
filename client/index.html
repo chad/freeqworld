@@ -146,6 +146,15 @@
             </div>
           </div>
         </div>
+        <div id="gate" class="overlay hidden" data-testid="gate">
+          <div class="card" style="min-width:380px">
+            <h1 style="font-size:1.1rem">CHANNEL POLICY</h1>
+            <div class="sub"><span id="gate-channel"></span> asks you to accept its rules before entering.</div>
+            <div class="field" id="gate-rules" style="white-space:pre-wrap; color: var(--ink)"></div>
+            <button id="gate-accept" data-testid="gate-accept" class="primary">Accept &amp; enter</button>
+            <button id="gate-later">Not now</button>
+          </div>
+        </div>
         <div id="travel" class="overlay hidden" data-testid="travel-confirm">
           <div class="card">
             <h1 style="font-size:1.1rem">FEDERATION PORTAL</h1>

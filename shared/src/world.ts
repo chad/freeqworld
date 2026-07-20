@@ -243,16 +243,23 @@ export function generateTilemap(room: RoomManifest): Tilemap {
   for (let y = 0; y < h; y++) { set(0, y, TILE.WALL); set(w - 1, y, TILE.WALL) }
 
   const doors: Tilemap['doors'] = []
-  for (const exit of room.exits) {
-    let x = Math.floor(w / 2)
-    let y = Math.floor(h / 2)
-    if (exit.direction === 'north') { y = 0 } else if (exit.direction === 'south') { y = h - 1 } else if (exit.direction === 'west') { x = 0 } else { x = w - 1 }
-    if (exit.direction === 'north' || exit.direction === 'south') {
-      set(x - 1, y, TILE.DOOR); set(x, y, TILE.DOOR); set(x + 1, y, TILE.DOOR)
-    } else {
-      set(x, y - 1, TILE.DOOR); set(x, y, TILE.DOOR); set(x, y + 1, TILE.DOOR)
-    }
-    doors.push({ channel: exit.channel, x, y, direction: exit.direction, label: exit.label, remote_server: exit.remote_server, remote_url: exit.remote_url })
+  // several doors may share a wall (the plaza's portal station) — distribute them evenly
+  for (const direction of ['north', 'south', 'east', 'west'] as const) {
+    const group = room.exits.filter((e) => e.direction === direction)
+    group.forEach((exit, i) => {
+      let x: number
+      let y: number
+      if (direction === 'north' || direction === 'south') {
+        x = Math.max(2, Math.min(w - 3, Math.round((w * (i + 1)) / (group.length + 1))))
+        y = direction === 'north' ? 0 : h - 1
+        set(x - 1, y, TILE.DOOR); set(x, y, TILE.DOOR); set(x + 1, y, TILE.DOOR)
+      } else {
+        y = Math.max(2, Math.min(h - 3, Math.round((h * (i + 1)) / (group.length + 1))))
+        x = direction === 'west' ? 0 : w - 1
+        set(x, y - 1, TILE.DOOR); set(x, y, TILE.DOOR); set(x, y + 1, TILE.DOOR)
+      }
+      doors.push({ channel: exit.channel, x, y, direction, label: exit.label, remote_server: exit.remote_server, remote_url: exit.remote_url })
+    })
   }
 
   // furniture from object positions

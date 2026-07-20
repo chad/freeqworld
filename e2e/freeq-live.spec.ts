@@ -29,6 +29,15 @@ test.describe('live against irc.freeq.at (spec 4.1: the protocol is real)', () =
     // no ?server param → freeq backend (default)
     await enterAsGuest(a, nameA, '/')
     await enterAsGuest(b, nameB, '/')
+
+    // fresh identities hit the #freeq policy gate on spawn — the gate itself
+    // is asserted here, then dismissed so the rest of the flow can run
+    for (const p of [a, b]) {
+      await expect(p.getByTestId('gate')).toBeVisible({ timeout: 20_000 })
+      await expect(p.locator('#gate-rules')).toContainText('#freeq')
+      await p.locator('#gate-later').click()
+    }
+
     const stateA = await hookState(a)
     expect(stateA.town).toBe('irc.freeq.at')
     expect(stateA.did).toMatch(/^did:key:z6Mk/)

@@ -63,6 +63,8 @@ export class FreeqBackend {
   private listEntries: ChannelEntry[] = []
   private listTimer = 0
   private personalTargets: string[] = []
+  private gateRules: string[] = []
+  private gateCollecting: string | null = null
 
   constructor(opts: BackendOptions) {
     this.opts = opts
@@ -206,6 +208,28 @@ export class FreeqBackend {
         expires_at: Date.now() + 8000,
       })
     })
+    // channel policy gates (real freeq feature): surface the rules, let the
+    // user accept, fall back to the liveliest public room meanwhile
+    this.client.on('joinGateRequired', (channel: string) => {
+      const pending = this.joinPending
+      if (!pending || pending.channel !== channel) return
+      window.clearTimeout(pending.timer)
+      this.joinPending = null
+      this.gateCollecting = channel
+      this.gateRules = []
+      this.client.raw(`POLICY ${channel} RULES`)
+      window.setTimeout(() => {
+        this.gateCollecting = null
+        this.emit({ t: 'gate', channel, rules: this.gateRules })
+      }, 700)
+      const fallback = this.world?.directory.find((d) => d.channel !== channel && !d.unlisted)?.channel
+      if (fallback) this.beginJoin(fallback, pending.isWelcome)
+    })
+    this.client.on('systemMessage', (_target: string, text: string) => {
+      if (!this.gateCollecting || !text) return
+      // only the POLICY RULES reply lines mention the gated channel
+      if (text.includes(this.gateCollecting) && !/Cannot join/.test(text)) this.gateRules.push(text)
+    })
     this.client.on('disconnected', () => {
       if (!this.closed) this.opts.onClose?.()
     })
@@ -341,6 +365,12 @@ export class FreeqBackend {
     if (channel === this.channel) return
     this.client.part(this.channel)
     this.beginJoin(channel, false)
+  }
+
+  /** User accepted a channel's policy gate: send the real POLICY ACCEPT, then enter. */
+  acceptPolicy(channel: string): void {
+    this.client.raw(`POLICY ${channel} ACCEPT`)
+    window.setTimeout(() => this.beginJoin(channel, false), 300)
   }
 
   sendMessage(channel: string, content: string): void {

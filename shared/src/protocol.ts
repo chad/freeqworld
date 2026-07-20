@@ -155,4 +155,5 @@ export type ServerFrame =
   | { t: 'presence'; channel: string; positions: WorldPosition[] }
   | { t: 'member'; channel: string; member: MemberInfo; online: boolean }
   | { t: 'music'; channel: string; state: import('./music').MusicState }
+  | { t: 'gate'; channel: string; rules: string[] }
   | { t: 'error'; message: string }

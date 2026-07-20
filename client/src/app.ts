@@ -204,6 +204,20 @@ export class App {
       case 'music':
         this.audio.setState(frame.state as MusicState)
         break
+      case 'gate': {
+        el('gate-channel').textContent = frame.channel
+        el('gate-rules').textContent = frame.rules.length ? frame.rules.join('\n') : 'This channel has an entry policy (no rules text published).'
+        el('gate').classList.remove('hidden')
+        const accept = el('gate-accept')
+        const fresh = accept.cloneNode(true) as HTMLElement // drop stale listeners
+        accept.replaceWith(fresh)
+        fresh.addEventListener('click', () => {
+          el('gate').classList.add('hidden')
+          const conn = this.conn
+          if (conn && 'acceptPolicy' in conn) (conn as FreeqBackend).acceptPolicy(frame.channel)
+        })
+        break
+      }
       case 'error':
         this.toast(frame.message)
         break
@@ -211,6 +225,7 @@ export class App {
   }
 
   private enterRoom(channel: string, history: DurableEvent[], members: MemberInfo[]): void {
+    const cameFrom = this.channel
     this.channel = channel
     let room = this.rooms.get(channel)
     if (!room) {
@@ -219,8 +234,15 @@ export class App {
       this.rooms.set(channel, room)
     }
     this.map = generateTilemap(room)
-    this.me.x = this.map.spawn[0] + 0.5
-    this.me.y = this.map.spawn[1] + 0.5
+    // arrive at the door that leads back where you came from, like a real place
+    const returnDoor = this.map.doors.find((d) => d.channel === cameFrom)
+    if (returnDoor) {
+      this.me.x = returnDoor.direction === 'west' ? 1.8 : returnDoor.direction === 'east' ? this.map.width - 2.8 : returnDoor.x + 0.5
+      this.me.y = returnDoor.direction === 'north' ? 1.8 : returnDoor.direction === 'south' ? this.map.height - 2.8 : returnDoor.y + 0.5
+    } else {
+      this.me.x = this.map.spawn[0] + 0.5
+      this.me.y = this.map.spawn[1] + 0.5
+    }
     this.moveTarget = null
     this.remotes.clear()
     this.bubbles = []
@@ -546,6 +568,7 @@ export class App {
       this.me.x += this.me.facing === 'west' ? 1 : this.me.facing === 'east' ? -1 : 0
     })
     el('travel-go').addEventListener('click', () => this.confirmTravel())
+    el('gate-later').addEventListener('click', () => el('gate').classList.add('hidden'))
     el('send-btn').addEventListener('click', () => void this.sendCurrentMessage())
     el<HTMLInputElement>('msg-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') void this.sendCurrentMessage()
