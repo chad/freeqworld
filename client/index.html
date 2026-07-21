@@ -3,7 +3,16 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>FreeqWorld</title>
+  <title>FreeqWorld — a federated chat protocol rendered as a 1992 multiplayer RPG</title>
+  <meta name="description" content="What looks like a retro multiplayer RPG is a real freeq client on irc.freeq.at: every room is a real channel, every message a real event, every bot a real identity. Walk around. Talk. Collect the people you meet." />
+  <meta property="og:title" content="FreeqWorld" />
+  <meta property="og:description" content="A federated chat protocol rendered as a 1992 multiplayer RPG. Every room is a real channel on irc.freeq.at — walk in." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://freeqworld.boxd.sh/" />
+  <meta property="og:image" content="https://freeqworld.boxd.sh/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://freeqworld.boxd.sh/og.png" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👾</text></svg>" />
   <style>
     :root {
       --bg: #0d0d14;
@@ -117,6 +126,19 @@
     }
     .hidden { display: none !important; }
     kbd { border: 1px solid var(--border); padding: 0 4px; border-radius: 3px; color: var(--cyan); font-size: 0.78rem; }
+
+    /* phones: world on top, chat as the bottom sheet (spec §12.5) */
+    @media (max-width: 760px) {
+      main { flex-direction: column; }
+      #worldwrap { flex: none; height: 44vh; min-height: 240px; }
+      #side { max-width: none; min-width: 0; flex: 1; border-left: none; border-top: 1px solid var(--border); }
+      #inspector { display: none !important; }
+      #members { max-height: 72px; }
+      .card { max-width: 92vw; min-width: 0 !important; padding: 16px; }
+      #dmpanel { width: calc(100vw - 24px); }
+      header { gap: 6px; }
+      header .topic { display: none; }
+    }
   </style>
 </head>
 <body class="mode-split">

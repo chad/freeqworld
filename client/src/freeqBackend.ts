@@ -18,6 +18,8 @@ export interface BackendOptions {
   channel: string
   identity: Identity | null
   avatarDid?: string
+  /** first-time visitors spawn in an open room; gated homes are a discovery, not a doorstep */
+  avoidGatedSpawn?: boolean
   onFrame: (frame: ServerFrame) => void
   onRawIn?: (frame: ServerFrame) => void
   onOpen?: (rttMs: number) => void
@@ -335,8 +337,14 @@ export class FreeqBackend {
     const hostParts = this.host().split(':')[0]!.split('.')
     const home = hostParts.length >= 2 ? hostParts[hostParts.length - 2] : undefined
     this.world = worldFromChannels(this.listEntries, { home, extraChannels: this.personalTargets })
-    // honor an explicitly requested channel; otherwise spawn where the server's life is
-    this.channel = this.channel || this.world.spawn
+    // honor an explicitly requested channel; otherwise spawn where the server's life is —
+    // but never drop a first-time visitor onto a policy gate
+    let spawn = this.world.spawn
+    if (this.opts.avoidGatedSpawn) {
+      const open = this.world.directory.find((d) => !d.unlisted)
+      if (open) spawn = open.channel
+    }
+    this.channel = this.channel || spawn
     this.beginJoin(this.channel, true)
   }
 

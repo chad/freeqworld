@@ -1,0 +1,195 @@
+[
+  {
+    "did": "did:plc:ewvi7nmzuoqusbcablsm7c4h",
+    "avatar_version": "avatar-v1",
+    "canonical_seed": "f900fed08848617755407ef6c78207e5d89feb6587914df4d625e7ca62eee7c7",
+    "expected_traits": {
+      "body_silhouette": "broad",
+      "head_shape": "round",
+      "skin_palette": "#f4d6b8",
+      "hair_shape": "mohawk",
+      "hair_palette": "#b8434e",
+      "eye_pixels": "visor",
+      "shirt_jacket": "#3f7cac",
+      "pants_skirt": "#5a3825",
+      "shoes": "#5a3825",
+      "accessory": "flower",
+      "idle_movement": "sway",
+      "walk_cadence": "steady",
+      "speech_sound": "burble",
+      "accent_palette": "#118ab2",
+      "arrival_effect": "drop",
+      "musical_leitmotif": "motif-v1"
+    },
+    "sprite_hash": "377964bc49c221304968a363581201706ad893f5a5953db82fb7ec8e75e1b9fb",
+    "leitmotif": {
+      "notes": [
+        60,
+        55,
+        60
+      ],
+      "rhythmic_cell": [
+        0.5,
+        0.5,
+        1
+      ],
+      "instrument": "square25"
+    }
+  },
+  {
+    "did": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    "avatar_version": "avatar-v1",
+    "canonical_seed": "dad7d85259fa1af47ffe00744c596a2053ed7d4ea3a3be4d2b9271dc3efbe8c4",
+    "expected_traits": {
+      "body_silhouette": "round",
+      "head_shape": "round",
+      "skin_palette": "#c68863",
+      "hair_shape": "curls",
+      "hair_palette": "#2b2b3a",
+      "eye_pixels": "wide",
+      "shirt_jacket": "#8447ad",
+      "pants_skirt": "#6b3a55",
+      "shoes": "#b8434e",
+      "accessory": "hat",
+      "idle_movement": "tap",
+      "walk_cadence": "ambling",
+      "speech_sound": "hum",
+      "accent_palette": "#06d6a0",
+      "arrival_effect": "drop",
+      "musical_leitmotif": "motif-v1"
+    },
+    "sprite_hash": "0cab593c012acfc4e57f3d97a18213c97376aa9facc405a0510e35e49bcdacfa",
+    "leitmotif": {
+      "notes": [
+        70,
+        72,
+        68,
+        70
+      ],
+      "rhythmic_cell": [
+        0.5,
+        0.5,
+        0.5,
+        1.5
+      ],
+      "instrument": "fmbell"
+    }
+  },
+  {
+    "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+    "avatar_version": "avatar-v1",
+    "canonical_seed": "bdd2a104bb08f6bc314b51e3202102b04994f16a552f042e34bdfd7870f8d566",
+    "expected_traits": {
+      "body_silhouette": "round",
+      "head_shape": "square",
+      "skin_palette": "#8d5a3b",
+      "hair_shape": "curls",
+      "hair_palette": "#b8434e",
+      "eye_pixels": "dot",
+      "shirt_jacket": "#c9a227",
+      "pants_skirt": "#5a3825",
+      "shoes": "#5a3825",
+      "accessory": "none",
+      "idle_movement": "blink",
+      "walk_cadence": "bouncy",
+      "speech_sound": "hum",
+      "accent_palette": "#9b5de5",
+      "arrival_effect": "sparkle",
+      "musical_leitmotif": "motif-v1"
+    },
+    "sprite_hash": "e17cb5dd867f68c6c77831a902a11d2d5627749e6ef323393e473d5d5a7ab1ec",
+    "leitmotif": {
+      "notes": [
+        62,
+        60,
+        62,
+        58
+      ],
+      "rhythmic_cell": [
+        0.5,
+        0.5,
+        0.5,
+        1.5
+      ],
+      "instrument": "fmbell"
+    }
+  },
+  {
+    "did": "did:key:z6Mkfriq1MqLBoPWecGoDLjguo1sB9brj6wT3qZ5BxkKpuP6",
+    "avatar_version": "avatar-v1",
+    "canonical_seed": "18e770b6fa926ae36528fe4e65be9376cda9c66d068902fed010fed98fef8541",
+    "expected_traits": {
+      "body_silhouette": "slim",
+      "head_shape": "round",
+      "skin_palette": "#8d5a3b",
+      "hair_shape": "bun",
+      "hair_palette": "#3f7cac",
+      "eye_pixels": "wide",
+      "shirt_jacket": "#8447ad",
+      "pants_skirt": "#5a3825",
+      "shoes": "#b8434e",
+      "accessory": "antenna",
+      "idle_movement": "bob",
+      "walk_cadence": "bouncy",
+      "speech_sound": "hum",
+      "accent_palette": "#ffd166",
+      "arrival_effect": "sparkle",
+      "musical_leitmotif": "motif-v1"
+    },
+    "sprite_hash": "845bba278bad03a40100828895e11fc0b09fa8c74872942113627d7a7f731865",
+    "leitmotif": {
+      "notes": [
+        63,
+        65,
+        72
+      ],
+      "rhythmic_cell": [
+        0.5,
+        1,
+        0.5
+      ],
+      "instrument": "fmbell"
+    }
+  },
+  {
+    "did": "did:example:freeqworld-conformance-0001",
+    "avatar_version": "avatar-v1",
+    "canonical_seed": "8b9cea2f3098a8d3e512dc07330e773528fa09da51435ddf799c9a16c2b6d0b7",
+    "expected_traits": {
+      "body_silhouette": "broad",
+      "head_shape": "square",
+      "skin_palette": "#9fb8ad",
+      "hair_shape": "curls",
+      "hair_palette": "#b8434e",
+      "eye_pixels": "dot",
+      "shirt_jacket": "#8447ad",
+      "pants_skirt": "#5a3825",
+      "shoes": "#1e1e28",
+      "accessory": "headphones",
+      "idle_movement": "blink",
+      "walk_cadence": "steady",
+      "speech_sound": "chirp",
+      "accent_palette": "#ef476f",
+      "arrival_effect": "teleport-rings",
+      "musical_leitmotif": "motif-v1"
+    },
+    "sprite_hash": "89403562c10ca4a58ec5c9eb534e391276a05354a56adaf1032254a907b75c6a",
+    "leitmotif": {
+      "notes": [
+        62,
+        66,
+        68,
+        65,
+        62
+      ],
+      "rhythmic_cell": [
+        1,
+        0.5,
+        0.5,
+        1,
+        1
+      ],
+      "instrument": "fmbell"
+    }
+  }
+]

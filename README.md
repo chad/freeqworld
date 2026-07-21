@@ -123,6 +123,22 @@ tilemaps — all derived, none stored. The music is synthesized in Web Audio
 from a shared `music-state` (energy/tension/density/brightness + topic
 family) computed from room activity; no audio assets exist.
 
+## Protocol
+
+The world layer is a set of documented, independently implementable
+extensions — deterministic avatars, ephemeral world-pos TAGMSGs, signed
+touch autographs, generated towns: see **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
+Conformance fixtures live in [`fixtures/`](fixtures/) and are enforced by the
+test suite.
+
+## Numbers
+
+- client bundle ≈ 53 KB gzipped (includes the freeq SDK); no image or audio assets — sprites and music are synthesized
+- first meaningful render well under a second on a warm cache; world generation adds one LIST round-trip
+- 320×180 internal render target, integer-ish scaled; 60 FPS canvas loop
+- presence: ≤3 position beacons/s while moving, expiring after 8s, never stored
+- 100+ unit tests, 15 Playwright end-to-end tests (several run against the live production server)
+
 ## Layout
 
 ```

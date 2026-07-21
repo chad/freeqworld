@@ -185,6 +185,7 @@ export class App {
       this.conn = new FreeqBackend({
         ...common,
         serverUrl: this.freeqUrl(),
+        avoidGatedSpawn: !localStorage.getItem('fimp-gate-accepted'),
         onAuth: (did) => {
           this.toast(`◈ DID authenticated with the server: ${shortDid(did)}`)
           this.updateInspectorMeta()
@@ -230,6 +231,8 @@ export class App {
         accept.replaceWith(fresh)
         fresh.addEventListener('click', () => {
           el('gate').classList.add('hidden')
+          // accepted once → future visits spawn straight into the home channel
+          localStorage.setItem('fimp-gate-accepted', frame.channel)
           const conn = this.conn
           if (conn && 'acceptPolicy' in conn) (conn as FreeqBackend).acceptPolicy(frame.channel)
         })
