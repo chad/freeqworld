@@ -106,7 +106,7 @@ export class TownConnection {
     this.sendRaw({ t: 'react', event: { ...base, signature } })
   }
 
-  sendPosition(channel: string, x: number, y: number, facing: 'north' | 'south' | 'east' | 'west', animation: 'idle' | 'walk' | 'react'): void {
+  sendPosition(channel: string, x: number, y: number, facing: 'north' | 'south' | 'east' | 'west', animation: 'idle' | 'walk' | 'react' | 'jump'): void {
     const id = this.opts.identity
     if (!id) return
     this.sendRaw({

@@ -190,7 +190,7 @@ export class ChiptuneEngine {
     osc.stop(t + 0.1)
   }
 
-  stinger(kind: 'door' | 'mention' | 'lock' | 'portal' | 'spark'): void {
+  stinger(kind: 'door' | 'mention' | 'lock' | 'portal' | 'spark' | 'jump'): void {
     if (this._muted || !this.ctx) return
     const t = this.ctx.currentTime
     const seqs: Record<string, number[]> = {
@@ -199,6 +199,7 @@ export class ChiptuneEngine {
       lock: [60, 55, 62],
       portal: [60, 64, 67, 72, 76],
       spark: [76, 83, 88, 95],
+      jump: [67, 79],
     }
     let time = t
     for (const midi of seqs[kind]!) {

@@ -6,7 +6,7 @@
 export const POS_TAG = '+freeq.at/world-pos'
 
 const FACINGS = ['north', 'south', 'east', 'west'] as const
-const ANIMS = ['idle', 'walk', 'react'] as const
+const ANIMS = ['idle', 'walk', 'react', 'jump'] as const
 
 export interface PosTagValue {
   x: number

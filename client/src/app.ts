@@ -76,6 +76,8 @@ export class App {
   private log: DurableEvent[] = []
   private lastMessageId: string | null = null
   private me = { x: 10, y: 10, facing: 'south' as WorldPosition['facing'], moving: false }
+  private jumpUntil = 0
+  private remoteJumps = new Map<string, number>() // did -> jump start ms
   private moveTarget: { x: number; y: number } | null = null
   private keys = new Set<string>()
   private lastPosSent = 0
@@ -421,6 +423,9 @@ export class App {
       if (p.did === this.identity?.did) continue
       seen.add(p.did)
       const existing = this.remotes.get(p.did)
+      if (p.animation === 'jump' && existing?.animation !== 'jump') {
+        this.remoteJumps.set(p.did, performance.now())
+      }
       if (existing) {
         existing.tx = p.x
         existing.ty = p.y
@@ -815,8 +820,10 @@ export class App {
       this.openSparkBook()
     } else if (k === 'm') {
       this.toggleTownMap()
-    } else if (k === ' ') {
+    } else if (k === 'e') {
       this.interact()
+    } else if (k === ' ') {
+      this.jump()
       e.preventDefault()
     } else if (e.key === 'Escape') {
       for (const id of ['idcard', 'objcard', 'travel', 'sparkbook', 'lightbox', 'townmap']) el(id).classList.add('hidden')
@@ -837,6 +844,18 @@ export class App {
     // real AT Protocol OAuth via the freeq auth broker — same flow as the
     // official web client; comes back to us with #oauth=<result>
     startOAuth(handle)
+  }
+
+  /** Space: hop. Broadcast like any movement — everyone sees you bounce. */
+  private jump(): void {
+    const now = performance.now()
+    if (now < this.jumpUntil || !this.identity) return
+    this.jumpUntil = now + 550
+    this.audio.stinger('jump')
+    this.conn?.sendPosition(this.channel, this.me.x, this.me.y, this.me.facing, 'jump')
+    window.setTimeout(() => {
+      this.conn?.sendPosition(this.channel, this.me.x, this.me.y, this.me.facing, this.me.moving ? 'walk' : 'idle')
+    }, 600)
   }
 
   private interact(): void {
@@ -1336,7 +1355,7 @@ export class App {
       const near = Math.hypot(o.position[0] + 0.5 - this.me.x, o.position[1] + 0.5 - this.me.y) < 1.7
       if (near) {
         ctx.fillStyle = '#ffd166'
-        ctx.fillText(`${o.label} [space]`, sx - 10, sy - 8)
+        ctx.fillText(`${o.label} [E]`, sx - 10, sy - 8)
       }
     }
 
@@ -1428,7 +1447,7 @@ export class App {
       if (near) {
         ctx.font = '7px monospace'
         ctx.fillStyle = '#ffd166'
-        ctx.fillText(`by ${g.from} [space]`, gx - 12, gy + 18)
+        ctx.fillText(`by ${g.from} [E]`, gx - 12, gy + 18)
       }
     }
 
@@ -1589,7 +1608,22 @@ export class App {
       for (const c of d.did) h = (h * 31 + c.charCodeAt(0)) | 0
       idleBob = Math.sin(performance.now() / 700 + (h % 100)) > 0.75 ? 1 : 0
     }
-    const sy = d.y * TILE_PX - cam.y + idleBob
+    // airborne? (space to jump — yours locally, everyone else's via presence)
+    let jumpOff = 0
+    const nowJ = performance.now()
+    if (d.me && nowJ < this.jumpUntil) {
+      const p = 1 - (this.jumpUntil - nowJ) / 550
+      jumpOff = Math.sin(p * Math.PI) * 7
+    } else if (!d.me) {
+      const js = this.remoteJumps.get(d.did)
+      if (js !== undefined && nowJ - js < 550) jumpOff = Math.sin(((nowJ - js) / 550) * Math.PI) * 7
+    }
+    if (jumpOff > 0.5) {
+      // grounded shadow while airborne
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'
+      ctx.fillRect(Math.round(sx - 4), Math.round(d.y * TILE_PX - cam.y + 2), 8, 2)
+    }
+    const sy = d.y * TILE_PX - cam.y + idleBob - jumpOff
     const frame = d.moving ? (Math.floor(this.walkPhase) % 2 === 0 ? 1 : 2) : 0
     if (set) {
       const img = set.frames.get(`${d.facing}:${frame}`)!
@@ -1866,6 +1900,7 @@ export class App {
         remotes: this.remotes.size,
         backend: this.backendKind(),
         sparks: this.sparks.count(),
+        jumping: performance.now() < this.jumpUntil,
       }),
       teleport: (x: number, y: number) => {
         this.me.x = x

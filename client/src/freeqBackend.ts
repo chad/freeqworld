@@ -482,7 +482,8 @@ export class FreeqBackend {
 
   sendPosition(channel: string, x: number, y: number, facing: WorldPosition['facing'], animation: WorldPosition['animation']): void {
     const now = Date.now()
-    if (now - this.lastPosSent < 300) return // be polite to the public server
+    // jumps are momentary — they skip the politeness throttle so they land
+    if (animation !== 'jump' && now - this.lastPosSent < 300) return
     this.lastPosSent = now
     this.client.sendTagmsg(channel, { [POS_TAG]: encodePosTag({ x, y, facing, animation, sequence: ++this.seq }) })
   }

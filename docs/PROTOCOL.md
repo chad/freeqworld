@@ -71,7 +71,8 @@ TAGMSG #channel
 
 - `x`, `y`: tile coordinates, two decimals
 - `facing`: `north|south|east|west`
-- `animation`: `idle|walk|react`
+- `animation`: `idle|walk|react|jump` (`jump` is momentary — renderers arc the
+  sprite for ~550ms then treat the next update as ground truth)
 - `sequence`: monotonically increasing per client; receivers apply
   last-write-wins and expire entries after ~8s of silence
 - Send rate: ≤ ~3/s while moving. Be polite; it's a shared server.

@@ -114,6 +114,16 @@ test.describe('doors and rooms (spec 7.2)', () => {
     await expect(page.getByTestId('header-loc')).toContainText('The Workshop')
   })
 
+  test('space jumps — briefly airborne, broadcast as a presence animation', async ({ page }) => {
+    await enterAsGuest(page, uniqueName('hopper'))
+    await page.keyboard.press(' ')
+    const st = await hookState(page)
+    expect((st as unknown as { jumping: boolean }).jumping).toBe(true)
+    await page.waitForTimeout(700)
+    const st2 = await hookState(page)
+    expect((st2 as unknown as { jumping: boolean }).jumping).toBe(false)
+  })
+
   test('chat mode renders a conventional client view (spec 20)', async ({ page }) => {
     await enterAsGuest(page, uniqueName('chatty'))
     await page.getByTestId('mode-chat').click()

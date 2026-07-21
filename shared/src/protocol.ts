@@ -120,7 +120,7 @@ export interface WorldPosition {
   x: number
   y: number
   facing: 'north' | 'south' | 'east' | 'west'
-  animation: 'idle' | 'walk' | 'react'
+  animation: 'idle' | 'walk' | 'react' | 'jump'
   client_instance: string
   sequence: number
   expires_at: number
