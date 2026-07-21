@@ -31,6 +31,10 @@ export interface BackendOptions {
   onTouch?: (fromNick: string, ts: number, sig: string, signerDid?: string) => void
   /** any world-touch between two OTHER people we witnessed (for introductions) */
   onTouchObserved?: (fromNick: string, toNick: string) => void
+  /** someone started/stopped typing in the current channel (real IRCv3 typing) */
+  onTyping?: (nick: string, isTyping: boolean) => void
+  /** someone's away state changed */
+  onAway?: (nick: string, away: boolean) => void
 }
 
 interface TrackedMember {
@@ -276,6 +280,12 @@ export class FreeqBackend {
       // only the POLICY RULES reply lines mention the gated channel
       if (text.includes(this.gateCollecting) && !/Cannot join/.test(text)) this.gateRules.push(text)
     })
+    this.client.on('typing', (channel: string, nick: string, isTyping: boolean) => {
+      if (channel === this.channel && nick !== this.client.nick) this.opts.onTyping?.(nick, isTyping)
+    })
+    this.client.on('userAway', (nick: string, reason: string | null) => {
+      this.opts.onAway?.(nick, reason !== null)
+    })
     this.client.on('disconnected', () => {
       if (!this.closed) this.opts.onClose?.()
     })
@@ -325,9 +335,10 @@ export class FreeqBackend {
     return this.members.get(nick)?.info.did ?? nickDid(nick)
   }
 
-  private toChatMessage(channel: string, m: { id: string; from: string; text: string; timestamp: Date; tags: Record<string, string>; encrypted?: boolean }): ChatMessage {
+  private toChatMessage(channel: string, m: { id: string; from: string; text: string; timestamp: Date; tags: Record<string, string>; encrypted?: boolean; replyTo?: string }): ChatMessage {
     const fromAgent = this.members.get(m.from)?.info.is_agent ?? false
     return {
+      thread_root: m.replyTo,
       id: m.id || crypto.randomUUID(),
       channel,
       sender: this.didFor(m.from),
@@ -448,6 +459,21 @@ export class FreeqBackend {
 
   sendMessage(channel: string, content: string): void {
     this.client.sendMessage(channel, content)
+  }
+
+  /** Reply inside a real freeq thread (visible as a thread to every client). */
+  sendThreadReply(channel: string, rootMsgId: string, content: string): void {
+    this.client.sendReplyInThread(channel, rootMsgId, content)
+  }
+
+  /** Real IRCv3 typing indicator out. */
+  setTyping(channel: string, typing: boolean): void {
+    try {
+      if (typing) this.client.startTyping(channel)
+      else this.client.stopTyping(channel)
+    } catch {
+      /* older servers */
+    }
   }
 
   sendReaction(channel: string, targetMessage: string, reaction: string): void {

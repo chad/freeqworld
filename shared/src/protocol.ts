@@ -76,6 +76,8 @@ export interface ChatMessage {
   type: 'text' | 'code' | 'link' | 'file' | 'structured' | 'system'
   ts: number
   edit_state: EditState
+  /** msgid of the thread root when this message is an in-thread reply */
+  thread_root?: string
   origin_server: string
   provenance?: { spawned_by: string; agent_chain: string[] }
   signature: string

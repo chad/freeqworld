@@ -230,6 +230,20 @@
             <button id="sparkbook-close">Close</button>
           </div>
         </div>
+        <div id="lightbox" class="overlay hidden" data-testid="lightbox">
+          <div class="card" style="max-width:80vw; text-align:center">
+            <div class="sub" id="lightbox-caption"></div>
+            <img id="lightbox-img" style="max-width:74vw; max-height:64vh; image-rendering:auto; border:1px solid var(--border)" alt="channel media" />
+            <div><button id="lightbox-close" style="margin-top:10px">Close</button></div>
+          </div>
+        </div>
+        <div id="townmap" class="overlay hidden" data-testid="town-map">
+          <div class="card" style="min-width:640px">
+            <h1 style="font-size:1rem">TOWN MAP <span style="color:var(--dim);font-size:0.75rem">· circles are real channels, sized by live souls · click to travel</span></h1>
+            <canvas id="townmap-canvas" width="600" height="380" style="width:600px;height:380px;cursor:pointer"></canvas>
+            <div><button id="townmap-close">Close</button></div>
+          </div>
+        </div>
         <div id="objcard" class="overlay hidden" data-testid="object-card">
           <div class="card" style="min-width:340px">
             <h1 style="font-size:1rem" id="obj-name">—</h1>

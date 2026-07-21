@@ -154,6 +154,23 @@ export class ChiptuneEngine {
     }
   }
 
+  /** People standing together harmonize: their motifs interleave as a tiny ensemble. */
+  async playEnsemble(dids: string[]): Promise<void> {
+    if (this._muted || !this.ctx || dids.length < 2) return
+    const motifs = await Promise.all(dids.slice(0, 4).map((d) => deriveLeitmotif(d)))
+    let start = this.ctx.currentTime + 0.1
+    motifs.forEach((motif, voice) => {
+      const wave: Wave = motif.instrument === 'triangle' ? 'triangle' : motif.instrument === 'fmbell' ? 'sine' : 'square'
+      let t = start + voice * 0.22 // canon-style staggered entries
+      for (let i = 0; i < motif.notes.length; i++) {
+        const dur = motif.rhythmic_cell[i]! * 0.2
+        this.note(t, motif.notes[i]! + (voice === 1 ? 12 : voice === 2 ? -12 : 0), dur, wave, 0.3)
+        t += dur
+      }
+    })
+    void start
+  }
+
   /** Per-DID speech blip (spec §6.5 voice glyph). */
   speechBlip(did: string): void {
     if (this._muted || !this.ctx) return

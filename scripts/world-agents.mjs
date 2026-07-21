@@ -64,7 +64,13 @@ const AGENTS = [
         if (!hits.length) return `nothing in my stacks for "${m[1].trim()}" — yet. everything said here is durable; it will be remembered.`
         return `from the channel history: ${hits.map((h) => `${h.from} said "${h.text.slice(0, 80)}"`).join(' · ')}`
       }
-      return `i remember what this channel says — CHATHISTORY is my library. mention me with "search <term>" and i will quote it.`
+      if (/remember|on this day|oldest|first thing/i.test(ctx.text)) {
+        const old = ctx.history.filter((h) => h.text && !/archivist|cartographer/i.test(h.from))[0]
+        if (!old) return `my stacks for this room are still empty — give me something to remember.`
+        const age = old.timestamp ? Math.round((Date.now() - old.timestamp.getTime()) / 3600000) : null
+        return `the earliest thing in my stacks here${age ? ` (${age}h ago)` : ''}: ${old.from} said "${old.text.slice(0, 100)}" — the durable log does not forget.`
+      }
+      return `i remember what this channel says — CHATHISTORY is my library. mention me with "search <term>", or ask what i "remember".`
     },
     onDm: (ctx) => ctx.agent.brain({ ...ctx, history: ctx.allHistory }),
   },

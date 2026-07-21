@@ -17,6 +17,7 @@ import { consumeOAuthReturn, startOAuth } from './identity'
 import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
+import { familiarFor, imageUrlsIn, threadsOf, type ThreadPlace } from './worldExtras'
 
 const TILE_PX = 8
 const VIEW_W = 320
@@ -98,6 +99,15 @@ export class App {
   private wornPaths = new Map<string, Map<number, number>>() // channel -> tileIdx -> heat
   private observedTouches = new Map<string, number>() // "a>b" -> ts
   private critter: { x: number; y: number; vx: number; vy: number; kind: number; nextTurn: number } | null = null
+  private threadPlaces: (ThreadPlace & { x: number; y: number })[] = []
+  private activeThread: string | null = null
+  private typingNicks = new Map<string, number>() // nick -> expires
+  private awayNicks = new Set<string>()
+  private lastTypingSent = 0
+  private galleryImages = new Map<string, HTMLImageElement>() // url -> loaded image
+  private galleryWall: { url: string; x: number; y: number; from: string }[] = []
+  private trails = new Map<string, { x: number; y: number }[]>() // did -> recent positions (for familiars)
+  private lastEnsemble = 0
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
   private spriteSets = new Map<string, SpriteSet>()
@@ -202,8 +212,16 @@ export class App {
           this.updateInspectorMeta()
         },
         onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
-        onTouch: (fromNick, ts, sig) => this.onTouchIn(fromNick, ts, sig),
+        onTouch: (fromNick, ts, sig, signerDid) => this.onTouchIn(fromNick, ts, sig, signerDid),
         onTouchObserved: (fromNick, toNick) => this.onTouchObserved(fromNick, toNick),
+        onTyping: (nick, isTyping) => {
+          if (isTyping) this.typingNicks.set(nick.toLowerCase(), performance.now() + 6000)
+          else this.typingNicks.delete(nick.toLowerCase())
+        },
+        onAway: (nick, away) => {
+          if (away) this.awayNicks.add(nick.toLowerCase())
+          else this.awayNicks.delete(nick.toLowerCase())
+        },
       })
     } else {
       this.conn = new TownConnection({ ...common, serverUrl: this.townUrl() })
@@ -296,13 +314,64 @@ export class App {
       const n = this.journal.stampCount()
       this.toast(`📍 stamped ${channel} — ${n} ${n === 1 ? 'place' : 'places'} (${explorerTitle(n)})`)
     }
-    // fresh room, fresh critter
+    // fresh room, fresh living layer
     this.critter = null
+    this.activeThread = null
+    this.typingNicks.clear()
+    this.awayNicks.clear()
+    this.galleryWall = []
+    this.trails.clear()
+    this.rebuildLivingLayer()
+  }
+
+  /** Threads become campfires; posted images hang on the walls. */
+  private rebuildLivingLayer(): void {
+    if (!this.map) return
+    const msgs = this.log
+      .filter((e): e is Extract<DurableEvent, { kind: 'message' }> => e.kind === 'message' && !e.event.enc)
+      .map((e) => e.event)
+    // campfires at deterministic walkable spots derived from the thread root
+    this.threadPlaces = threadsOf(msgs).map((t) => {
+      const seed = new Uint8Array(16)
+      for (let i = 0; i < t.root.length; i++) seed[i % 16] = (seed[i % 16]! * 37 + t.root.charCodeAt(i)) & 0xff
+      const rng = seededPrng(seed)
+      let x = this.map!.spawn[0] + 0.5
+      let y = this.map!.spawn[1] - 2
+      for (let tries = 0; tries < 50; tries++) {
+        const cx = 3 + rng() * (this.map!.width - 6)
+        const cy = 3 + rng() * (this.map!.height - 6)
+        if (isWalkable(this.map!, cx, cy)) {
+          x = cx
+          y = cy
+          break
+        }
+      }
+      return { ...t, x, y }
+    })
+    // gallery: most recent images hang along the interior of the north wall
+    const urls: { url: string; from: string }[] = []
+    for (const m of msgs) for (const url of imageUrlsIn(m.content)) urls.push({ url, from: m.sender_name })
+    const recent = urls.slice(-6)
+    this.galleryWall = recent.map((u, i) => ({
+      ...u,
+      x: 3 + ((i * (this.map!.width - 8)) / Math.max(1, recent.length - 1) || 0),
+      y: 1.6,
+    }))
+    for (const g of this.galleryWall) {
+      if (!this.galleryImages.has(g.url)) {
+        const img = new Image()
+        img.src = g.url
+        this.galleryImages.set(g.url, img)
+      }
+    }
   }
 
   private onDurable(durable: DurableEvent, live: boolean): void {
     this.log.push(durable)
     if (this.log.length > 500) this.log.shift()
+    if (durable.kind === 'message' && (durable.event.thread_root || imageUrlsIn(durable.event.content).length)) {
+      this.rebuildLivingLayer()
+    }
     if (durable.kind === 'message') {
       const msg = durable.event
       this.lastMessageId = msg.id
@@ -453,10 +522,14 @@ export class App {
       }
       const env = await encryptMessage(this.vaultKey, content)
       this.conn.sendMessage(this.channel, '', env)
+    } else if (this.activeThread && 'sendThreadReply' in this.conn) {
+      // standing at a campfire: speak into the real thread
+      ;(this.conn as FreeqBackend).sendThreadReply(this.channel, this.activeThread, content)
     } else {
       // freeq backend: the SDK's channel E2EE encrypts before the wire when active
       this.conn.sendMessage(this.channel, content)
     }
+    if ('setTyping' in this.conn) (this.conn as FreeqBackend).setTyping(this.channel, false)
     input.value = ''
   }
 
@@ -465,7 +538,17 @@ export class App {
   private renderTranscript(): void {
     const t = el('transcript')
     const rows: string[] = []
-    for (const e of this.log.slice(-200)) {
+    // campfire focus: only the thread you are standing at
+    let entries = this.log.slice(-200)
+    if (this.activeThread) {
+      const root = this.activeThread
+      entries = this.log.filter((e) => e.kind === 'message' && (e.event.id === root || e.event.thread_root === root))
+      const place = this.threadPlaces.find((p) => p.root === root)
+      rows.push(
+        `<div class="row" style="color:var(--amber)">🔥 campfire — this thread only (${place?.count ?? entries.length} messages). Step away to hear the room again.</div>`,
+      )
+    }
+    for (const e of entries) {
       if (e.kind === 'message') {
         const m = e.event
         const member = this.members.get(m.sender)
@@ -642,6 +725,18 @@ export class App {
     el('dm-close').addEventListener('click', () => el('dmpanel').classList.add('hidden'))
     el('spark-hud').addEventListener('click', () => this.openSparkBook())
     el('sparkbook-close').addEventListener('click', () => el('sparkbook').classList.add('hidden'))
+    el('lightbox-close').addEventListener('click', () => el('lightbox').classList.add('hidden'))
+    el('townmap-close').addEventListener('click', () => el('townmap').classList.add('hidden'))
+    el<HTMLCanvasElement>('townmap-canvas').addEventListener('click', (e) => {
+      const rect = (e.target as HTMLCanvasElement).getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+      const hit = this.mapSpots.find((s) => Math.hypot(s.x - x, s.y - y) <= s.r)
+      if (hit) {
+        el('townmap').classList.add('hidden')
+        if (hit.channel !== this.channel) this.conn?.join(hit.channel)
+      }
+    })
     el<HTMLInputElement>('dm-input').addEventListener('keydown', (e) => {
       e.stopPropagation()
       if (e.key === 'Enter') this.sendDm()
@@ -652,6 +747,14 @@ export class App {
       if (e.key === 'Enter') void this.sendCurrentMessage()
       if (e.key === 'Escape') (e.target as HTMLInputElement).blur()
       e.stopPropagation()
+    })
+    // real IRCv3 typing indicator out (throttled)
+    el<HTMLInputElement>('msg-input').addEventListener('input', () => {
+      const now = performance.now()
+      if (now - this.lastTypingSent < 3000) return
+      this.lastTypingSent = now
+      const conn = this.conn
+      if (conn && 'setTyping' in conn) (conn as FreeqBackend).setTyping(this.channel, true)
     })
     for (const mode of ['world', 'split', 'chat', 'dev']) {
       el(`mode-${mode}`).addEventListener('click', () => this.setMode(mode))
@@ -710,11 +813,13 @@ export class App {
       this.openDirectory()
     } else if (k === 'b') {
       this.openSparkBook()
+    } else if (k === 'm') {
+      this.toggleTownMap()
     } else if (k === ' ') {
       this.interact()
       e.preventDefault()
     } else if (e.key === 'Escape') {
-      for (const id of ['idcard', 'objcard', 'travel', 'sparkbook']) el(id).classList.add('hidden')
+      for (const id of ['idcard', 'objcard', 'travel', 'sparkbook', 'lightbox', 'townmap']) el(id).classList.add('hidden')
     }
   }
 
@@ -753,6 +858,15 @@ export class App {
     if (nearest) {
       void this.showIdentityCard(nearest.did)
       return
+    }
+    // a painting on the wall?
+    for (const g of this.galleryWall) {
+      if (Math.hypot(g.x + 0.7 - this.me.x, g.y + 1.4 - this.me.y) < 2.2) {
+        el<HTMLImageElement>('lightbox-img').src = g.url
+        el('lightbox-caption').textContent = `posted by ${g.from} in ${this.channel}`
+        el('lightbox').classList.remove('hidden')
+        return
+      }
     }
     const room = this.rooms.get(this.channel)
     if (!room) return
@@ -824,6 +938,64 @@ export class App {
       }
     })
     setTimeout(() => joinInput.focus(), 50)
+  }
+
+  /** M key (spec §6.4): the town as a metro map — real channels, live sizes. */
+  private mapSpots: { channel: string; x: number; y: number; r: number }[] = []
+
+  private toggleTownMap(): void {
+    const overlay = el('townmap')
+    if (!overlay.classList.contains('hidden')) {
+      overlay.classList.add('hidden')
+      return
+    }
+    const canvas = el<HTMLCanvasElement>('townmap-canvas')
+    const ctx = canvas.getContext('2d')!
+    const dir = this.town?.directory ?? []
+    const W = canvas.width
+    const H = canvas.height
+    ctx.fillStyle = '#0d0d14'
+    ctx.fillRect(0, 0, W, H)
+    this.mapSpots = []
+    const cx = W / 2
+    const cy = H / 2
+    const spawn = this.town?.spawn_room ?? dir[0]?.channel ?? '#lobby'
+    const ring1 = dir.filter((d) => d.channel !== spawn).slice(0, 8)
+    const rest = dir.filter((d) => d.channel !== spawn).slice(8, 40)
+    const spot = (channel: string, users: number, x: number, y: number) => {
+      const r = Math.max(5, Math.min(16, 5 + users * 1.6))
+      this.mapSpots.push({ channel, x, y, r: r + 4 })
+      const here = channel === this.channel
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fillStyle = here ? '#ffd166' : users > 0 ? '#3a9188' : '#2c2c40'
+      ctx.fill()
+      ctx.strokeStyle = here ? '#fff' : '#454560'
+      ctx.stroke()
+      ctx.font = '10px monospace'
+      ctx.fillStyle = here ? '#ffd166' : '#d8d6c8'
+      ctx.fillText(`${channel}${users ? ` ${users}` : ''}`, x - channel.length * 3, y - r - 4)
+    }
+    // spokes to the inner ring first (lines under circles)
+    ctx.strokeStyle = '#2c2c40'
+    ring1.forEach((d, i) => {
+      const a = (i / ring1.length) * Math.PI * 2 - Math.PI / 2
+      ctx.beginPath()
+      ctx.moveTo(cx, cy)
+      ctx.lineTo(cx + Math.cos(a) * 105, cy + Math.sin(a) * 105)
+      ctx.stroke()
+    })
+    const spawnEntry = dir.find((d) => d.channel === spawn)
+    spot(spawn, spawnEntry?.users ?? 0, cx, cy)
+    ring1.forEach((d, i) => {
+      const a = (i / ring1.length) * Math.PI * 2 - Math.PI / 2
+      spot(d.channel, d.users, cx + Math.cos(a) * 105, cy + Math.sin(a) * 105)
+    })
+    rest.forEach((d, i) => {
+      const a = (i / rest.length) * Math.PI * 2 - Math.PI / 2 + 0.1
+      spot(d.channel, d.users, cx + Math.cos(a) * 175, cy + Math.sin(a) * 165)
+    })
+    overlay.classList.remove('hidden')
   }
 
   /** G key (spec §6.4): jump-to-channel via the directory from anywhere. */
@@ -984,11 +1156,55 @@ export class App {
     }
     this.scanForTouches(now)
     this.updateCritter(dt)
+    this.updateLivingLayer(now)
     this.bubbles = this.bubbles.filter((b) => b.until > now)
     this.emotes = this.emotes.filter((e) => e.until > now)
     this.footsteps = this.footsteps.filter((f) => f.until > now)
     this.draw()
     requestAnimationFrame(() => this.frame())
+  }
+
+  private updateLivingLayer(now: number): void {
+    // campfire focus: standing near a thread place tunes the transcript to it
+    let nearThread: string | null = null
+    for (const t of this.threadPlaces) {
+      if (Math.hypot(t.x - this.me.x, t.y - this.me.y) < 2) {
+        nearThread = t.root
+        break
+      }
+    }
+    if (nearThread !== this.activeThread) {
+      this.activeThread = nearThread
+      el<HTMLInputElement>('msg-input').placeholder = nearThread ? 'reply in this thread… (Enter)' : 'say something… (Enter)'
+      this.renderTranscript()
+    }
+    // expire typing indicators
+    for (const [nick, until] of this.typingNicks) if (until < now) this.typingNicks.delete(nick)
+    // record movement trails (familiars walk them)
+    this.recordTrail(this.identity ? avatarDid(this.identity) : 'me', this.me.x, this.me.y)
+    for (const [did, r] of this.remotes) this.recordTrail(this.members.get(did)?.avatar_did ?? did, r.x, r.y)
+    // ensembles: three or more souls standing together harmonize (rarely)
+    if (now - this.lastEnsemble > 45_000 && this.identity && !this.audio.muted) {
+      const close: string[] = [avatarDid(this.identity)]
+      for (const [did, r] of this.remotes) {
+        if (Math.hypot(r.x - this.me.x, r.y - this.me.y) < 3) close.push(this.members.get(did)?.avatar_did ?? did)
+      }
+      if (close.length >= 3) {
+        this.lastEnsemble = now
+        void this.audio.playEnsemble(close)
+        this.toast('♪ your leitmotifs interleave — an ensemble forms')
+      }
+    }
+  }
+
+  private recordTrail(key: string, x: number, y: number): void {
+    const trail = this.trails.get(key) ?? []
+    const last = trail[trail.length - 1]
+    if (!last || Math.hypot(last.x - x, last.y - y) > 0.15) {
+      trail.push({ x, y })
+      if (trail.length > 14) trail.shift()
+      this.trails.set(key, trail)
+    }
   }
 
   private dropFootstep(key: string, x: number, y: number, now: number): void {
@@ -1140,7 +1356,17 @@ export class App {
       const stagger = d.direction === 'north' || d.direction === 'south' ? (i % 2) * 8 : 0
       const ly = d.direction === 'north' ? sy + 14 + stagger : d.direction === 'south' ? sy - 6 - stagger : sy + 10
       ctx.fillText(label, Math.round(sx - label.length * 1.6), Math.round(ly))
-      if (near) ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + 8))
+      if (near) {
+        // door peek: what's through here, live
+        const entry = this.town?.directory?.find((e) => e.channel === d.channel)
+        if (entry?.topic) {
+          ctx.fillStyle = '#b8b6c8'
+          const topic = entry.topic.length > 34 ? `${entry.topic.slice(0, 33)}…` : entry.topic
+          ctx.fillText(topic, Math.round(sx - topic.length * 1.6), Math.round(ly + 9))
+        }
+        ctx.fillStyle = '#ffd166'
+        ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + (entry?.topic ? 18 : 8)))
+      }
     })
 
     // worn paths: traffic subtly lightens the floor it crosses
@@ -1153,6 +1379,56 @@ export class App {
         if (hx < -TILE_PX || hy < -TILE_PX || hx > VIEW_W || hy > VIEW_H) continue
         ctx.fillStyle = `rgba(255,250,235,${Math.min(0.07, n * 0.0015).toFixed(4)})`
         ctx.fillRect(hx, hy, TILE_PX, TILE_PX)
+      }
+    }
+
+    // campfires: threads as places (spec §9.3)
+    const nowT = performance.now()
+    for (const t of this.threadPlaces) {
+      const fx = t.x * TILE_PX - cam.x
+      const fy = t.y * TILE_PX - cam.y
+      if (fx < -16 || fy < -16 || fx > VIEW_W + 16 || fy > VIEW_H + 16) continue
+      const active = t.root === this.activeThread
+      // log ring
+      ctx.fillStyle = '#4a3520'
+      ctx.fillRect(Math.round(fx - 4), Math.round(fy + 2), 3, 2)
+      ctx.fillRect(Math.round(fx + 2), Math.round(fy + 2), 3, 2)
+      ctx.fillRect(Math.round(fx - 1), Math.round(fy + 3), 3, 2)
+      // flame flicker
+      const flick = Math.sin(nowT / 110 + t.x) > 0
+      ctx.fillStyle = active ? '#ffd166' : '#e8853a'
+      ctx.fillRect(Math.round(fx - 1), Math.round(fy - (flick ? 3 : 2)), 3, flick ? 5 : 4)
+      ctx.fillStyle = '#fff3c4'
+      ctx.fillRect(Math.round(fx), Math.round(fy - 1), 1, 2)
+      ctx.font = '7px monospace'
+      ctx.fillStyle = active ? '#ffd166' : '#8a8896'
+      const label = active ? `🔥 ${t.preview.slice(0, 22)}… (${t.count})` : `thread (${t.count})`
+      ctx.fillText(label, Math.round(fx - label.length * 1.6), Math.round(fy - 8))
+    }
+
+    // the gallery: real channel media hanging on the wall
+    for (const g of this.galleryWall) {
+      const gx = Math.round(g.x * TILE_PX - cam.x)
+      const gy = Math.round(g.y * TILE_PX - cam.y)
+      if (gx < -20 || gy < -20 || gx > VIEW_W + 20 || gy > VIEW_H + 20) continue
+      ctx.fillStyle = '#6b5433'
+      ctx.fillRect(gx - 1, gy - 1, 14, 11)
+      const img = this.galleryImages.get(g.url)
+      if (img?.complete && img.naturalWidth > 0) {
+        try {
+          ctx.drawImage(img, gx, gy, 12, 9)
+        } catch {
+          /* broken image */
+        }
+      } else {
+        ctx.fillStyle = '#2a2a38'
+        ctx.fillRect(gx, gy, 12, 9)
+      }
+      const near = Math.hypot(g.x + 0.7 - this.me.x, g.y + 1.4 - this.me.y) < 2.2
+      if (near) {
+        ctx.font = '7px monospace'
+        ctx.fillStyle = '#ffd166'
+        ctx.fillText(`by ${g.from} [space]`, gx - 12, gy + 18)
       }
     }
 
@@ -1193,6 +1469,31 @@ export class App {
     }
     drawables.sort((a, b) => a.y - b.y)
     for (const d of drawables) this.drawPlayer(d, cam)
+
+    // familiars: a third of souls travel with a small companion walking their trail
+    for (const d of drawables) {
+      const fam = familiarFor(d.did)
+      if (!fam) continue
+      const trail = this.trails.get(d.did)
+      const spot = trail && trail.length > 4 ? trail[Math.max(0, trail.length - 5)]! : { x: d.x - 1, y: d.y }
+      const fx = Math.round(spot.x * TILE_PX - cam.x - 6)
+      const fy = Math.round(spot.y * TILE_PX - cam.y)
+      const hop = Math.sin(performance.now() / 200 + d.x) > 0.6 ? 1 : 0
+      ctx.fillStyle = fam.color
+      if (fam.kind === 'wisp') {
+        ctx.globalAlpha = 0.8
+        ctx.fillRect(fx, fy - 4 - hop, 2, 2)
+        ctx.fillRect(fx + 1, fy - 6 - hop, 1, 1)
+        ctx.globalAlpha = 1
+      } else if (fam.kind === 'bird') {
+        ctx.fillRect(fx, fy - 3 - hop, 3, 2)
+        ctx.fillRect(fx + 3, fy - 4 - hop, 1, 1)
+      } else if (fam.kind === 'beetle') {
+        ctx.fillRect(fx, fy - 2, 3, 2)
+      } else {
+        ctx.fillRect(fx, fy - 2 - hop, 3, 2 + hop)
+      }
+    }
 
     // bubbles
     for (const b of this.bubbles) {
@@ -1305,6 +1606,16 @@ export class App {
     ctx.fillStyle = member?.is_agent ? '#ffb454' : d.me ? '#67c26b' : d.parked ? '#8a8896' : '#d8d6c8'
     const label = member?.is_agent ? `⚙ ${name}` : member?.verification_status === 'verified' ? `◈ ${name}` : name
     ctx.fillText(label, Math.round(sx - label.length * 2), Math.round(sy - 22))
+    // living presence: real typing + away signals
+    const nickKey = (member?.nick ?? member?.display_name ?? '').toLowerCase()
+    if (nickKey && this.typingNicks.has(nickKey)) {
+      const phase = Math.floor(performance.now() / 250) % 3
+      ctx.fillStyle = '#56c9d6'
+      ctx.fillText('·'.repeat(phase + 1), Math.round(sx - 2), Math.round(sy - 28))
+    } else if (nickKey && this.awayNicks.has(nickKey)) {
+      ctx.fillStyle = '#8a8896'
+      ctx.fillText('💤', Math.round(sx + 4), Math.round(sy - 26))
+    }
   }
 
   private drawBubble(cx: number, cy: number, b: Bubble): void {
