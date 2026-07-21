@@ -123,6 +123,11 @@ tilemaps — all derived, none stored. The music is synthesized in Web Audio
 from a shared `music-state` (energy/tension/density/brightness + topic
 family) computed from room activity; no audio assets exist.
 
+## Deploying
+
+Production topology, the auth-broker trap, and rollback paths:
+**[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)**. Read it before touching prod.
+
 ## Protocol
 
 The world layer is a set of documented, independently implementable
