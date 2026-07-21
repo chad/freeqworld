@@ -28,9 +28,14 @@ describe('touch autographs (signed first-contact)', () => {
   it('round-trips the wire tag and rejects garbage', () => {
     const enc = encodeTouchTag('somenick', 1_800_000_000_000, 'zSigZig')
     const dec = decodeTouchTag(enc)
-    expect(dec).toEqual({ toNick: 'somenick', ts: 1_800_000_000_000, sig: 'zSigZig' })
+    expect(dec).toEqual({ toNick: 'somenick', ts: 1_800_000_000_000, sig: 'zSigZig', signerDid: undefined })
     expect(decodeTouchTag('nonsense')).toBeNull()
     expect(decodeTouchTag('')).toBeNull()
+  })
+
+  it('carries an explicit signer did for OAuth identities (device key signs)', () => {
+    const enc = encodeTouchTag('somenick', 42, 'zSig', 'did:key:z6MkDevice')
+    expect(decodeTouchTag(enc)).toEqual({ toNick: 'somenick', ts: 42, sig: 'zSig', signerDid: 'did:key:z6MkDevice' })
   })
 })
 

@@ -28,7 +28,7 @@ export interface BackendOptions {
   /** a real IRC direct message arrived (peer nick, text, timestamp) */
   onDm?: (fromNick: string, text: string, ts: number) => void
   /** a signed world-touch addressed to us arrived (spark exchange) */
-  onTouch?: (fromNick: string, ts: number, sig: string) => void
+  onTouch?: (fromNick: string, ts: number, sig: string, signerDid?: string) => void
   /** any world-touch between two OTHER people we witnessed (for introductions) */
   onTouchObserved?: (fromNick: string, toNick: string) => void
 }
@@ -88,15 +88,27 @@ export class FreeqBackend {
       nick,
       channels: [], // joined after the world is generated from LIST
       onNickCollision: 'random-suffix',
-      sasl: id
+      // OAuth-verified sessions authenticate as the real AT Protocol DID via
+      // the broker's web-token; everyone else proves their device did:key
+      sasl: id?.oauth
         ? {
-            method: 'crypto',
-            did: id.did,
-            token: '',
-            pdsUrl: '',
-            signer: async (challenge: Uint8Array) => b64url(nacl.sign.detached(challenge, id.keypair.secretKey)),
+            method: 'web-token',
+            did: id.oauth.did,
+            token: id.oauth.web_token,
+            pdsUrl: id.oauth.pds_url,
           }
-        : undefined,
+        : id
+          ? {
+              method: 'crypto',
+              did: id.did,
+              token: '',
+              pdsUrl: '',
+              signer: async (challenge: Uint8Array) => b64url(nacl.sign.detached(challenge, id.keypair.secretKey)),
+            }
+          : undefined,
+      brokerUrl: id?.oauth?.broker_url,
+      brokerToken: id?.oauth?.broker_token || undefined,
+      skipInitialBrokerRefresh: Boolean(id?.oauth?.web_token),
     })
 
     this.client.on('authenticated', (did: string) => {
@@ -216,7 +228,7 @@ export class FreeqBackend {
       if (touchValue && nickFrom && nickFrom !== this.client.nick) {
         const touch = decodeTouchTag(touchValue)
         if (touch && touch.toNick.toLowerCase() === this.client.nick.toLowerCase()) {
-          this.opts.onTouch?.(nickFrom, touch.ts, touch.sig)
+          this.opts.onTouch?.(nickFrom, touch.ts, touch.sig, touch.signerDid)
         } else if (touch) {
           this.opts.onTouchObserved?.(nickFrom, touch.toNick)
         }
@@ -430,8 +442,8 @@ export class FreeqBackend {
   }
 
   /** Broadcast a signed touch (spark autograph) addressed to a nick in the room. */
-  sendTouch(channel: string, toNick: string, ts: number, sig: string): void {
-    this.client.sendTagmsg(channel, { [TOUCH_TAG]: encodeTouchTag(toNick, ts, sig) })
+  sendTouch(channel: string, toNick: string, ts: number, sig: string, signerDid?: string): void {
+    this.client.sendTagmsg(channel, { [TOUCH_TAG]: encodeTouchTag(toNick, ts, sig, signerDid) })
   }
 
   sendMessage(channel: string, content: string): void {

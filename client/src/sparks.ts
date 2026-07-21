@@ -18,17 +18,19 @@ export function verifyTouch(fromDid: string, toDid: string, ts: number, sig: str
   return verifyEvent({ kind: 'world-touch', from: fromDid, to: toDid, ts }, sig, fromDid)
 }
 
-/** wire format: <toNick>,<ts>,<sig> — all base58/nick-safe, no tag escaping needed */
-export function encodeTouchTag(toNick: string, ts: number, sig: string): string {
-  return `${toNick},${ts},${sig}`
+/** wire format: <toNick>,<ts>,<sig>[,<signerDid>] — all base58/nick/did-safe.
+ *  signerDid names the did:key that produced the signature; OAuth users are
+ *  known publicly by their did:plc but sign with their device key. */
+export function encodeTouchTag(toNick: string, ts: number, sig: string, signerDid?: string): string {
+  return signerDid ? `${toNick},${ts},${sig},${signerDid}` : `${toNick},${ts},${sig}`
 }
 
-export function decodeTouchTag(value: string): { toNick: string; ts: number; sig: string } | null {
+export function decodeTouchTag(value: string): { toNick: string; ts: number; sig: string; signerDid?: string } | null {
   const parts = value.split(',')
-  if (parts.length !== 3) return null
+  if (parts.length !== 3 && parts.length !== 4) return null
   const ts = Number(parts[1])
   if (!parts[0] || !parts[2] || !Number.isFinite(ts)) return null
-  return { toNick: parts[0]!, ts, sig: parts[2]! }
+  return { toNick: parts[0]!, ts, sig: parts[2]!, signerDid: parts[3] || undefined }
 }
 
 export interface SparkEntry {

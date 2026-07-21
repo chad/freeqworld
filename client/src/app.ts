@@ -9,10 +9,11 @@ import { seededPrng } from '../../shared/src/hkdf'
 import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine } from './audio'
 import { FreeqBackend } from './freeqBackend'
-import { avatarDid, createIdentity, loadIdentity, resolveBlueskyHandle, type Identity } from './identity'
+import { avatarDid, createIdentity, loadIdentity, type Identity } from './identity'
 import { TownConnection } from './net'
 import { drawPreview, spriteFor, type SpriteSet } from './sprites'
 import { explorerTitle, Journal, shouldRekindle } from './journal'
+import { consumeOAuthReturn, startOAuth } from './identity'
 import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
@@ -108,6 +109,16 @@ export class App {
     this.updateSparkHud()
     window.addEventListener('resize', () => this.fitCanvas())
     this.bindUi()
+    // returning from the broker's OAuth redirect? consume the result first
+    const oauthIdentity = consumeOAuthReturn()
+    if (oauthIdentity) {
+      this.identity = oauthIdentity
+      el('landing').classList.add('hidden')
+      this.connect('')
+      this.toast(`◈ signed in as ${oauthIdentity.handle} — ${shortDid(oauthIdentity.did)}`)
+      requestAnimationFrame(() => this.frame())
+      return
+    }
     this.identity = loadIdentity()
     if (this.identity) {
       el('landing').classList.add('hidden')
@@ -715,18 +726,12 @@ export class App {
     this.toast(`your DID: ${shortDid(this.identity.did)} — your avatar is derived from it`)
   }
 
-  private async doBskyLogin(): Promise<void> {
+  private doBskyLogin(): void {
     const handle = el<HTMLInputElement>('bsky-input').value.trim()
     if (!handle) return
-    try {
-      const did = await resolveBlueskyHandle(handle)
-      this.identity = createIdentity(handle.split('.')[0] ?? handle, { did, handle })
-      el('landing').classList.add('hidden')
-      this.connect('')
-      this.toast(`linked ${handle} → ${shortDid(did)} · avatar derived from your AT Protocol DID`)
-    } catch {
-      this.toast('could not resolve that handle — try guest entry')
-    }
+    // real AT Protocol OAuth via the freeq auth broker — same flow as the
+    // official web client; comes back to us with #oauth=<result>
+    startOAuth(handle)
   }
 
   private interact(): void {
@@ -1409,12 +1414,15 @@ export class App {
       })
       if (isNew) this.earnSpark(member.display_name)
       // send our signed side regardless — it lets their book verify us,
-      // and their reply upgrades our entry to a verified autograph
+      // and their reply upgrades our entry to a verified autograph.
+      // Signatures always come from the device did:key (OAuth identities
+      // declare it as signerDid in the tag).
       const conn = this.conn
       if (conn && 'sendTouch' in conn && member.nick) {
         const ts = Date.now()
-        const sig = signTouch(this.identity.did, did, ts, this.identity.keypair.secretKey)
-        ;(conn as FreeqBackend).sendTouch(this.channel, member.nick, ts, sig)
+        const sig = signTouch(this.identity.device_did, did, ts, this.identity.keypair.secretKey)
+        const signer = this.identity.device_did !== this.identity.did ? this.identity.device_did : undefined
+        ;(conn as FreeqBackend).sendTouch(this.channel, member.nick, ts, sig, signer)
       }
     }
     // parked members (conventional clients): an unsigned brush past
@@ -1436,11 +1444,14 @@ export class App {
   }
 
   /** Someone touched us: verify their signature and reciprocate once. */
-  private onTouchIn(fromNick: string, ts: number, sig: string): void {
+  private onTouchIn(fromNick: string, ts: number, sig: string, signerDid?: string): void {
     if (!this.identity) return
     const member = [...this.members.values()].find((m) => (m.nick ?? m.display_name).toLowerCase() === fromNick.toLowerCase())
     if (!member) return
-    const verified = verifyTouch(member.did, this.identity.did, ts, sig)
+    // the signing key is the declared device did:key (OAuth users) or the
+    // member's own did:key; the server's nick attribution binds the two
+    const signer = signerDid ?? member.did
+    const verified = verifyTouch(signer, this.identity.did, ts, sig)
     const isNew = this.sparks.add({
       did: member.did,
       nick: fromNick,
@@ -1461,8 +1472,9 @@ export class App {
     const conn = this.conn
     if (conn && 'sendTouch' in conn) {
       const myTs = Date.now()
-      const mySig = signTouch(this.identity.did, member.did, myTs, this.identity.keypair.secretKey)
-      ;(conn as FreeqBackend).sendTouch(this.channel, fromNick, myTs, mySig)
+      const mySig = signTouch(this.identity.device_did, member.did, myTs, this.identity.keypair.secretKey)
+      const mySigner = this.identity.device_did !== this.identity.did ? this.identity.device_did : undefined
+      ;(conn as FreeqBackend).sendTouch(this.channel, fromNick, myTs, mySig, mySigner)
     }
   }
 
