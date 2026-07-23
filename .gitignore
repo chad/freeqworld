@@ -1,6 +1,7 @@
 node_modules/
 client/dist/
 pfp/dist/
+pfp/dist-root/
 test-results/
 playwright-report/
 .vite/

@@ -196,9 +196,36 @@ PDS allows within the session.
 4. ☑ Optional post with image embed + UTF-8-correct link facet.
 5. ☑ Success screen + cross-promo CTA into FreeqWorld.
 6. ☑ Tests (8 unit + headless end-to-end with mocked AT Proto); deploy at `/id`.
-7. ☐ Path A (OAuth one-tap) behind the same interface — needs a broker XRPC
-   proxy (cross-repo). Do when the broker grows one.
-8. ☐ `pfp.freeq.at` vanity domain (CNAME + broker allowlist entry).
+7. ☑ `pfp.freeq.at` vanity domain — **live**. DNSimple A record → the Hetzner
+   box (87.99.152.98); nginx static vhost at `/var/www/pfp` (SPA fallback);
+   Let's Encrypt cert via certbot. Built with `--base=/` (the `/id` build keeps
+   base `/id/`). No broker dependency: the working feature (reveal +
+   app-password avatar set) is 100% client-side.
+8. ☐ Path A (OAuth one-tap) — **deliberately deferred, see below.**
+
+## OAuth one-tap: why it's deferred (not just undone)
+
+"One-tap" means the browser never handles a credential — but that requires the
+**broker to write to the user's PDS on their behalf**, and the current broker
+can't:
+
+- It requests **identity-only** OAuth scope (`"atproto"`, `lib.rs`) — no
+  `blob:*` / `repo:*` write grant.
+- It exposes **no XRPC proxy** (`/xrpc/* → 404`); it only mints a session token
+  for `irc.freeq.at`'s own auth.
+- AT Proto access tokens are **DPoP-bound**, so even if the browser held the
+  token it couldn't sign requests without the broker's DPoP key (and handing
+  that key to the browser would defeat DPoP entirely).
+
+Doing it properly means, in the **shared production sign-in broker**: widen the
+requested scope (changes the consent screen for *every* `irc.freeq.at` user),
+persist per-user DPoP keys + tokens, and add a DPoP-signing XRPC write proxy
+for `uploadBlob`/`putRecord`/`createRecord`. That is security-sensitive, only
+testable via interactive Bluesky login, and gates all real sign-ins — not a
+thing to deploy blind before a launch. The app-password path already delivers
+the whole feature reliably, so one-tap stays a documented follow-up: add a
+broker XRPC proxy + write scope, add `pfp.freeq.at`/`freeqworld.boxd.sh` to the
+broker allowlist, then slot it behind the existing `BskyWriter` surface.
 
 ### Shipped auth note
 App password is used **once, in memory, never stored**; the connect modal is

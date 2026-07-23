@@ -7,9 +7,32 @@ Read this before touching production. The topology has one genuine trap
 
 ```
 freeqworld.boxd.sh          boxd VM "freeqworld" — static client + demo towns + NPC agents
+freeqworld.boxd.sh/id       the FreeqWorld ID / PFP microapp (served by the town server)
 irc.freeq.at                Hetzner box (87.99.152.98) — freeq-server in Docker + nginx
 auth.freeq.at               SAME Hetzner box — freeq-auth-broker in Docker  ⚠ see below
+pfp.freeq.at                SAME Hetzner box — nginx STATIC vhost of the PFP app (root base)
 ```
+
+## pfp.freeq.at (the PFP microapp, vanity domain)
+
+The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
+
+- **freeqworld.boxd.sh/id** — the town server serves `pfp/dist` (built with
+  base `/id/`) at `/id`. Deploy with the client:
+  `boxd exec freeqworld -- 'cd freeqworld && git pull && npx vite build pfp'`
+  then restart `freeqworld` if the server route changed.
+- **pfp.freeq.at** — a **static nginx vhost on the Hetzner box** (NOT boxd;
+  boxd only does `*.boxd.sh`). DNS is a DNSimple A record `pfp → 87.99.152.98`
+  (account 109, creds at `~/.config/dnsimple/auth.txt` locally,
+  `/root/.secrets/dnsimple.ini` on the box). Files live at `/var/www/pfp`;
+  vhost `/etc/nginx/sites-enabled/pfp.freeq.at` (SPA `try_files … /index.html`);
+  TLS via `certbot --nginx -d pfp.freeq.at`. **Redeploy:**
+  ```sh
+  npx vite build pfp --base=/ --outDir=dist-root
+  rsync -az --delete pfp/dist-root/ root@87.99.152.98:/var/www/pfp/
+  ```
+  The app is fully client-side (Bluesky APIs direct via app password), so this
+  vhost has no backend and no broker dependency.
 
 ## freeqworld.boxd.sh (this repo)
 

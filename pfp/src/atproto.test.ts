@@ -82,8 +82,8 @@ describe('atproto app-password writer', () => {
     const facet = rec.facets[0]
     const bytes = new TextEncoder().encode(rec.text)
     const sliced = new TextDecoder().decode(bytes.slice(facet.index.byteStart, facet.index.byteEnd))
-    expect(sliced).toBe('freeqworld.boxd.sh/id')
-    expect(facet.features[0].uri).toBe('https://freeqworld.boxd.sh/id')
+    expect(sliced).toBe('pfp.freeq.at')
+    expect(facet.features[0].uri).toBe('https://pfp.freeq.at')
   })
 
   it('uploadBlob posts bytes with the right content-type and returns the blob', async () => {

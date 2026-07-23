@@ -119,7 +119,7 @@ export async function setAvatar(s: Session, avatar: BlobRef): Promise<void> {
 /** Build a post with the PFP image and a link facet back to FreeqWorld. */
 export async function postAboutIt(s: Session, image: BlobRef): Promise<void> {
   const enc = new TextEncoder()
-  const url = 'freeqworld.boxd.sh/id'
+  const url = 'pfp.freeq.at'
   const text = `I'm now my FreeqWorld self ✦\n\nYour identity has a face — mine's derived from my DID: ${url}`
   const start = enc.encode(text.slice(0, text.indexOf(url))).length
   const end = start + enc.encode(url).length
