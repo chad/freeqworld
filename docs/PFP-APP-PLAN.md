@@ -217,12 +217,16 @@ authenticated by the `broker_token`. We did **not** touch the identity-only
 **Scope (the one real subtlety):** bare `atproto` turned out *not* to grant blob
 upload on granular-scope PDSes — `uploadBlob` fails with
 `ScopeMissingError: blob:image/png`. (graph_follow's plain `createRecord`
-happened to work, which masked it.) So the PFP flow opts into a wider grant:
-`GET /auth/login?intent=pfp` requests `atproto transition:generic` (covers blob
-+ repo writes, already in the advertised client-metadata scope). Only this
-opt-in flow gets the broader consent screen; every other sign-in stays
-identity-only. Re-auth is required for anyone who tried before this landed
-(their old token is identity-only).
+happened to work, which masked it.) So the PFP flow opts into a **least-
+privilege granular grant** — exactly what setting an avatar touches:
+`GET /auth/login?intent=pfp` requests
+`atproto blob:image/* repo:app.bsky.actor.profile repo:app.bsky.feed.post`
+(NOT `transition:generic`, which is full-account access and a scary consent
+screen). `repo:app.bsky.actor.profile` was added to the client-metadata scope
+union so the request is within registered scopes. Only this opt-in flow gets
+that consent screen; every other sign-in stays identity-only. Re-auth is
+required for anyone who tried before this landed (their old token is
+identity-only).
 
 `/api/pfp/set-avatar {broker_token, image_b64, post}` is a *narrow* sibling of
 graph_follow, scoped to three actions on the caller's OWN repo: `uploadBlob`,
