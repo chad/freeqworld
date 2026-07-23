@@ -154,3 +154,11 @@ export function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('toBlob failed'))), 'image/png'),
   )
 }
+
+/** Standard-base64 PNG (what the broker's /api/pfp/set-avatar expects). */
+export async function canvasToPngBase64(canvas: HTMLCanvasElement): Promise<string> {
+  const buf = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer())
+  let bin = ''
+  for (const b of buf) bin += String.fromCharCode(b)
+  return btoa(bin)
+}

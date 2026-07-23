@@ -3,8 +3,9 @@
 // or "surprise me" → PFP preview + PNG download. No login required.
 
 import { generateKeypair, didFromPublicKey } from '../../shared/src/signing'
-import { renderPfp, traitSummary, canvasToPngBlob, type Variant } from './render'
+import { renderPfp, traitSummary, canvasToPngBlob, canvasToPngBase64, type Variant } from './render'
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
+import { startPfpOAuth, consumePfpOAuthReturn, setAvatarViaBroker, type PfpOAuthReturn } from './oauth'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -112,10 +113,53 @@ function bind(): void {
   $('setbsky').addEventListener('click', openConnect)
   $('c-cancel').addEventListener('click', () => $('connect').classList.add('hidden'))
   $('c-go').addEventListener('click', () => void doConnect())
+  $('c-oauth').addEventListener('click', () => {
+    const handle = $<HTMLInputElement>('c-handle').value.trim()
+    if (!handle) { $('c-err').textContent = 'enter your handle first'; return }
+    startPfpOAuth(handle, variant, $<HTMLInputElement>('c-post').checked)
+  })
   $<HTMLInputElement>('c-pass').addEventListener('keydown', (e) => {
     if ((e as KeyboardEvent).key === 'Enter') void doConnect()
   })
   $('done-close').addEventListener('click', () => $('done').classList.add('hidden'))
+}
+
+function showDone(handle: string, posted: boolean): void {
+  $('connect').classList.add('hidden')
+  const prof = $<HTMLAnchorElement>('done-profile')
+  prof.href = `https://bsky.app/profile/${handle}`
+  $('done-msg').textContent = posted
+    ? `@${handle} is now your FreeqWorld self — and you posted about it.`
+    : `@${handle}'s avatar is now your FreeqWorld self.`
+  $('done').classList.remove('hidden')
+}
+
+// Returning from the broker OAuth redirect: the broker holds the token and does
+// the write; we render the (deterministic) PFP for the verified DID and hand it
+// over.
+async function completeOAuth(ret: PfpOAuthReturn): Promise<void> {
+  currentDid = ret.did
+  currentLabel = `@${ret.handle}`
+  variant = ret.variant
+  $('v-portrait').classList.toggle('active', variant === 'portrait')
+  $('v-explorer').classList.toggle('active', variant === 'explorer')
+  await paint()
+  $('connect').classList.remove('hidden')
+  $<HTMLButtonElement>('c-oauth').disabled = true
+  $<HTMLButtonElement>('c-go').disabled = true
+  $('c-err').textContent = ''
+  $('c-status').textContent = 'setting your avatar…'
+  try {
+    const { canvas } = await renderPfp(ret.did, variant, 512)
+    const b64 = await canvasToPngBase64(canvas)
+    const { handle, posted } = await setAvatarViaBroker(ret.brokerToken, b64, ret.post)
+    showDone(handle || ret.handle, posted)
+  } catch (e) {
+    $('c-status').textContent = ''
+    $('c-err').textContent = String((e as Error).message ?? e)
+    $<HTMLButtonElement>('c-oauth').disabled = false
+    $<HTMLButtonElement>('c-go').disabled = false
+  }
 }
 
 function openConnect(): void {
@@ -149,7 +193,7 @@ async function doConnect(): Promise<void> {
     await paint()
 
     status.textContent = 'rendering your character…'
-    const { canvas } = await renderPfp(session.did, variant, 1000)
+    const { canvas } = await renderPfp(session.did, variant, 512)
     const bytes = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer())
 
     status.textContent = 'uploading…'
@@ -180,3 +224,7 @@ async function doConnect(): Promise<void> {
 }
 
 bind()
+
+// Handle a broker OAuth return on load (one-tap completion).
+const oauthReturn = consumePfpOAuthReturn()
+if (oauthReturn) void completeOAuth(oauthReturn)

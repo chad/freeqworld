@@ -116,17 +116,20 @@
   <div id="connect" class="overlay hidden">
     <div class="modal">
       <h2>Set it as your Bluesky avatar</h2>
-      <p class="hint">Uses a <b>Bluesky app password</b> (Settings → Privacy &amp; Security → App Passwords). It runs entirely in your browser, is used once, and is never stored. Your main password is never entered here.</p>
       <label for="c-handle">handle</label>
       <input type="text" id="c-handle" placeholder="you.bsky.social" autocomplete="username" spellcheck="false" />
+      <label class="check"><input type="checkbox" id="c-post" checked /> also post about it (with the image)</label>
+      <button id="c-oauth" style="width:100%;margin-top:12px">✦ continue with Bluesky (one-tap)</button>
+      <p class="hint" style="margin:8px 0 0">Signs in with Bluesky; the broker sets your avatar — your browser never handles a password.</p>
+      <div style="display:flex;align-items:center;gap:8px;color:var(--dim);font-size:.78rem;margin:14px 0 4px"><span style="flex:1;height:1px;background:var(--border)"></span>or an app password<span style="flex:1;height:1px;background:var(--border)"></span></div>
+      <p class="hint">A <b>Bluesky app password</b> (Settings → Privacy &amp; Security → App Passwords). Runs in your browser, used once, never stored. Not your main password.</p>
       <label for="c-pass">app password</label>
       <input type="password" id="c-pass" placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="current-password" />
-      <label class="check"><input type="checkbox" id="c-post" checked /> also post about it (with the image)</label>
       <div class="err" id="c-err"></div>
       <div class="status" id="c-status"></div>
       <div class="btns">
         <button class="ghost" id="c-cancel">cancel</button>
-        <button id="c-go">set it ✦</button>
+        <button id="c-go">set with app password</button>
       </div>
     </div>
   </div>
