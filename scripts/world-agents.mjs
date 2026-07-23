@@ -226,6 +226,22 @@ for (const [i, agent] of AGENTS.entries()) {
     }
 
     if (!msg.text.toLowerCase().includes(agent.nick)) return
+
+    // A quest request must never be swallowed by the ambient-chatter cooldown.
+    // The per-channel 10s gate below is right for keeping the room calm, but in
+    // a crowded #lobby (say, a launch) it would silently drop everyone who asks
+    // for a quest within 10s of the last reply — the "cartographer isn't
+    // responding" bug. Quest issuance is idempotent and delivered by DM, so we
+    // gate it PER USER instead: every courier who asks gets their envelope.
+    if (agent.nick === 'cartographer' && /quest/i.test(msg.text)) {
+      const qkey = `quest:${msg.from.toLowerCase()}`
+      if (Date.now() - (lastReply.get(qkey) ?? 0) < 8_000) return
+      lastReply.set(qkey, Date.now())
+      const reply = agent.brain(ctxFor(msg, ch))
+      if (reply) setTimeout(() => client.sendMessage(ch, reply), 500 + Math.random() * 500)
+      return
+    }
+
     const last = lastReply.get(ch) ?? 0
     if (Date.now() - last < 10_000) return
     lastReply.set(ch, Date.now())
