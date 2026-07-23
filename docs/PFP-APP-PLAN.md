@@ -211,9 +211,18 @@ PDS allows within the session.
 
 The insight that made it safe: the broker **already** writes to users' PDSs
 (`/api/graph/follow` does a `createRecord`) using the stored DPoP-bound session,
-authenticated by the `broker_token`. So no scope or consent change was needed —
-bare `atproto` already grants the transitional writes — and we did **not** touch
-the identity-only `irc.freeq.at` sign-in path.
+authenticated by the `broker_token`. We did **not** touch the identity-only
+`irc.freeq.at` sign-in path.
+
+**Scope (the one real subtlety):** bare `atproto` turned out *not* to grant blob
+upload on granular-scope PDSes — `uploadBlob` fails with
+`ScopeMissingError: blob:image/png`. (graph_follow's plain `createRecord`
+happened to work, which masked it.) So the PFP flow opts into a wider grant:
+`GET /auth/login?intent=pfp` requests `atproto transition:generic` (covers blob
++ repo writes, already in the advertised client-metadata scope). Only this
+opt-in flow gets the broader consent screen; every other sign-in stays
+identity-only. Re-auth is required for anyone who tried before this landed
+(their old token is identity-only).
 
 `/api/pfp/set-avatar {broker_token, image_b64, post}` is a *narrow* sibling of
 graph_follow, scoped to three actions on the caller's OWN repo: `uploadBlob`,
