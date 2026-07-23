@@ -20,7 +20,7 @@ export function startPfpOAuth(handle: string, variant: string, post: boolean): v
   sessionStorage.setItem('pfp-oauth-intent', JSON.stringify({ variant, post }))
   const returnTo = `${location.origin}${location.pathname}`
   location.href =
-    `${BROKER_URL}/auth/login?handle=${encodeURIComponent(clean)}&return_to=${encodeURIComponent(returnTo)}`
+    `${BROKER_URL}/auth/login?intent=pfp&handle=${encodeURIComponent(clean)}&return_to=${encodeURIComponent(returnTo)}`
 }
 
 /** Consume a `#oauth=…` broker return, if present, restoring the render intent. */
