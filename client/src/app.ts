@@ -297,7 +297,10 @@ export class App {
     this.moveTarget = null
     this.remotes.clear()
     this.bubbles = []
-    this.members = new Map(members.map((m) => [m.did, m]))
+    // drop secondary selves (my device did:key / linked identity) from the roster
+    this.members = new Map(
+      members.filter((m) => !(this.identity && m.did !== this.identity.did && this.isMe(m.did))).map((m) => [m.did, m]),
+    )
     this.log = [...history]
     this.vaultPlain.clear()
     this.audio.setRoom(room.music.bpm, channel)
@@ -417,10 +420,19 @@ export class App {
     this.renderTranscript()
   }
 
+  /** Any identity that is *me* — primary DID, the browser device key, or a
+   *  linked identity. The world must never render my own selves as separate
+   *  characters (e.g. an OAuth session seeing its own did:key device ghost). */
+  private isMe(did: string | undefined | null): boolean {
+    const id = this.identity
+    if (!did || !id) return false
+    return did === id.did || did === id.device_did || did === id.linked_did || did === avatarDid(id)
+  }
+
   private onPresence(positions: WorldPosition[]): void {
     const seen = new Set<string>()
     for (const p of positions) {
-      if (p.did === this.identity?.did) continue
+      if (this.isMe(p.did)) continue
       seen.add(p.did)
       const existing = this.remotes.get(p.did)
       if (p.animation === 'jump' && existing?.animation !== 'jump') {
@@ -439,6 +451,10 @@ export class App {
   }
 
   private onMember(member: MemberInfo, online: boolean, silent = false): void {
+    // A secondary self (my device did:key or a linked identity, connected
+    // alongside my primary session) is not a separate person — don't announce,
+    // list, or render it as a ghost. My primary DID stays in the roster.
+    if (this.identity && member.did !== this.identity.did && this.isMe(member.did)) return
     if (online) {
       const isNew = !this.members.has(member.did)
       this.members.set(member.did, member)
@@ -637,7 +653,7 @@ export class App {
     // private encounter: DM button when the backend supports it (spec §6.5)
     const dmBtn = el('idcard-dm')
     const nick = m?.nick ?? m?.display_name
-    const canDm = Boolean(nick && this.conn && 'sendDm' in this.conn && did !== this.identity?.did)
+    const canDm = Boolean(nick && this.conn && 'sendDm' in this.conn && !this.isMe(did))
     dmBtn.classList.toggle('hidden', !canDm)
     if (canDm) {
       const fresh = dmBtn.cloneNode(true) as HTMLElement
@@ -867,7 +883,7 @@ export class App {
     }
     if (!nearest) {
       for (const m of this.members.values()) {
-        if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+        if (this.isMe(m.did) || this.remotes.has(m.did)) continue
         const spot = this.parkedSpot(m.did)
         if (!spot) continue
         const dist = Math.hypot(spot.x - this.me.x, spot.y - this.me.y)
@@ -1044,7 +1060,7 @@ export class App {
       }
     }
     for (const m of this.members.values()) {
-      if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+      if (this.isMe(m.did) || this.remotes.has(m.did)) continue
       const spot = this.parkedSpot(m.did)
       if (spot && Math.abs(spot.x - wx) < 1.2 && Math.abs(spot.y - 1.2 - wy) < 1.6) {
         this.showIdentityCard(m.did)
@@ -1479,7 +1495,7 @@ export class App {
       drawables.push({ x: r.x, y: r.y, did: r.did, facing: r.facing, moving: r.animation === 'walk', me: false })
     }
     for (const m of this.members.values()) {
-      if (m.did === this.identity?.did || this.remotes.has(m.did)) continue
+      if (this.isMe(m.did) || this.remotes.has(m.did)) continue
       const spot = this.parkedSpot(m.did)
       if (spot) drawables.push({ x: spot.x, y: spot.y, did: m.did, facing: 'south', moving: false, me: false, parked: true })
     }
@@ -1552,7 +1568,7 @@ export class App {
   private computeParkedLayout(): void {
     if (!this.map) return
     const parked = [...this.members.keys()]
-      .filter((did) => did !== this.identity?.did && !this.remotes.has(did))
+      .filter((did) => !this.isMe(did) && !this.remotes.has(did))
       .sort()
     const key = `${this.channel}|${parked.join(',')}`
     if (key === this.parkedLayoutKey) return
@@ -1585,7 +1601,7 @@ export class App {
   }
 
   private findPlayer(did: string): { x: number; y: number } | null {
-    if (this.identity && (did === this.identity.did || did === avatarDid(this.identity))) return { x: this.me.x, y: this.me.y }
+    if (this.isMe(did)) return { x: this.me.x, y: this.me.y }
     const r = this.remotes.get(did)
     if (r) return { x: r.x, y: r.y }
     if (this.members.has(did)) return this.parkedSpot(did)
@@ -1772,7 +1788,7 @@ export class App {
     }
     // parked members (conventional clients): an unsigned brush past
     for (const m of this.members.values()) {
-      if (m.did === this.identity.did || this.remotes.has(m.did)) continue
+      if (this.isMe(m.did) || this.remotes.has(m.did)) continue
       const spot = this.parkedSpot(m.did)
       if (!spot || !near(spot.x, spot.y)) continue
       const isNew = this.sparks.add({
