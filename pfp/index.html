@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FreeqWorld ID — your identity, as a face</title>
+  <meta name="description" content="See the deterministic pixel character your Bluesky identity derives into — the same face you'd walk around as in FreeqWorld. Nothing uploaded; derived from your DID." />
+  <meta property="og:title" content="FreeqWorld ID" />
+  <meta property="og:description" content="Your identity, as a face. A deterministic pixel character derived from your DID — set it as your Bluesky avatar." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://freeqworld.boxd.sh/id/" />
+  <meta property="og:image" content="https://freeqworld.boxd.sh/og.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>✦</text></svg>" />
+  <style>
+    :root {
+      --bg:#0d0d14; --panel:#14141f; --panel2:#1b1b2b; --ink:#d8d6c8; --dim:#8a8896;
+      --amber:#ffb454; --cyan:#56c9d6; --green:#67c26b; --border:#2c2c40;
+      font-size:15px;
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--ink);
+      font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+      min-height:100vh; display:flex; flex-direction:column; align-items:center;
+      padding:32px 16px 64px;
+    }
+    a { color:var(--cyan); }
+    h1 { font-size:1.6rem; margin:0 0 2px; letter-spacing:.5px; }
+    h1 .sp { color:var(--amber); }
+    .sub { color:var(--dim); margin:0 0 22px; text-align:center; max-width:44ch; line-height:1.5; }
+    .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; width:min(560px,100%); }
+    .row { display:flex; gap:8px; }
+    input {
+      flex:1; background:var(--panel2); border:1px solid var(--border); color:var(--ink);
+      padding:11px 12px; border-radius:8px; font:inherit;
+    }
+    input:focus { outline:none; border-color:var(--cyan); }
+    button {
+      background:var(--amber); color:#1a1a24; border:none; padding:11px 16px; border-radius:8px;
+      font:inherit; font-weight:700; cursor:pointer;
+    }
+    button:disabled { opacity:.6; cursor:default; }
+    button.ghost { background:transparent; color:var(--ink); border:1px solid var(--border); font-weight:400; }
+    button.ghost.active { border-color:var(--cyan); color:var(--cyan); }
+    .surprise { margin-top:10px; font-size:.9rem; color:var(--dim); }
+    .hidden { display:none; }
+    #result { margin-top:22px; display:flex; flex-direction:column; align-items:center; gap:12px; }
+    canvas { image-rendering:pixelated; width:280px; height:280px; border-radius:16px; border:1px solid var(--border); background:#0d0d14; }
+    .label { color:var(--amber); font-weight:700; }
+    .did { color:var(--dim); font-size:.8rem; word-break:break-all; text-align:center; max-width:44ch; }
+    .variants { display:flex; gap:8px; }
+    .traits { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; max-width:44ch; }
+    .trait { background:var(--panel2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; font-size:.78rem; color:var(--dim); }
+    .trait b { color:var(--ink); font-weight:600; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+    .note { color:var(--dim); font-size:.82rem; text-align:center; max-width:46ch; line-height:1.5; margin-top:4px; }
+    .foot { margin-top:26px; color:var(--dim); font-size:.85rem; text-align:center; }
+    .toast {
+      position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
+      background:var(--panel2); border:1px solid var(--border); color:var(--ink);
+      padding:10px 14px; border-radius:8px; font-size:.85rem; max-width:90vw;
+    }
+  </style>
+</head>
+<body>
+  <h1>Freeq<span class="sp">World</span> ID <span class="sp">✦</span></h1>
+  <p class="sub">Your identity, as a face. Every FreeqWorld character is <em>derived</em> — HKDF from your DID → 16 traits → a pixel body. Same identity, same face, everywhere. Here's yours.</p>
+
+  <div class="card">
+    <div class="row">
+      <input id="handle" placeholder="your Bluesky handle (e.g. you.bsky.social)" autocomplete="off" spellcheck="false" />
+      <button id="go">see my character</button>
+    </div>
+    <div class="surprise">no handle? <a href="#" id="surprise">surprise me →</a></div>
+
+    <div id="result" class="hidden">
+      <canvas id="pfp" width="512" height="512"></canvas>
+      <div class="label" id="label"></div>
+      <div class="variants">
+        <button class="ghost active" id="v-portrait">portrait</button>
+        <button class="ghost" id="v-explorer">explorer</button>
+      </div>
+      <div class="traits" id="traits"></div>
+      <div class="did" id="did"></div>
+      <div class="actions">
+        <button id="download">download PNG</button>
+        <button class="ghost" id="setbsky">set as Bluesky avatar →</button>
+      </div>
+      <div class="note">This isn't uploaded art — it's computed from your DID. It's the exact character you'd walk around as in FreeqWorld.</div>
+    </div>
+  </div>
+
+  <div class="foot">part of <a href="/">FreeqWorld</a> — a federated chat protocol rendered as a 1992 multiplayer RPG.</div>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

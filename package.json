@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite-node server/src/main.ts",
     "build": "vite build client",
+    "build:pfp": "vite build pfp",
+    "build:all": "vite build client && vite build pfp",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",

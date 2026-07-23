@@ -12,6 +12,7 @@ import { Town, type Connection } from './town'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
+const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -157,6 +158,32 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   }
   if (path === '/api/agents') {
     return json(town.getAgents().map((a) => a.member))
+  }
+
+  // FreeqWorld ID microapp at /id (built from pfp/, base '/id/')
+  if (path === '/id') {
+    res.writeHead(302, { location: '/id/' })
+    res.end()
+    return
+  }
+  if (path === '/id/' || path.startsWith('/id/')) {
+    let sub = path.slice('/id'.length) // '/id/' -> '/', '/id/assets/x' -> '/assets/x'
+    if (sub === '/' || sub === '') sub = '/index.html'
+    const pfpFull = join(PFP_DIST, sub)
+    if (!pfpFull.startsWith(PFP_DIST)) {
+      res.writeHead(403)
+      res.end()
+      return
+    }
+    try {
+      const body = await readFile(pfpFull)
+      res.writeHead(200, { 'content-type': MIME[extname(pfpFull)] ?? 'application/octet-stream' })
+      res.end(body)
+    } catch {
+      res.writeHead(404)
+      res.end('not found — build the pfp app first: npx vite build pfp')
+    }
+    return
   }
 
   // static client
