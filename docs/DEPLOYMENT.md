@@ -31,8 +31,19 @@ The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
   npx vite build pfp --base=/ --outDir=dist-root
   rsync -az --delete pfp/dist-root/ root@87.99.152.98:/var/www/pfp/
   ```
-  The app is fully client-side (Bluesky APIs direct via app password), so this
-  vhost has no backend and no broker dependency.
+  The reveal + app-password paths are fully client-side (Bluesky APIs direct),
+  so this vhost has no backend. The **one-tap** path additionally calls the auth
+  broker (below).
+
+### One-tap avatar writes (broker `/api/pfp/set-avatar`)
+
+The PFP “continue with Bluesky” button uses OAuth via the broker, which then
+writes the avatar on the user's behalf — the browser never holds a credential.
+This lives in the freeq repo's `freeq-auth-broker` (a narrow sibling of
+`/api/graph/*`; no scope/consent change). To change it, edit `lib.rs` and
+**redeploy the broker** (see the auth.freeq.at section below — same Docker
+procedure). `pfp.freeq.at` and `freeqworld.boxd.sh` are in the broker's CORS
+list, `ALLOWED_ORIGINS`, and `is_valid_return_to`; landed on `main` @ `c87a348`.
 
 ## freeqworld.boxd.sh (this repo)
 

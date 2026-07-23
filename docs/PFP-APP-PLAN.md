@@ -201,31 +201,35 @@ PDS allows within the session.
    Let's Encrypt cert via certbot. Built with `--base=/` (the `/id` build keeps
    base `/id/`). No broker dependency: the working feature (reveal +
    app-password avatar set) is 100% client-side.
-8. ☐ Path A (OAuth one-tap) — **deliberately deferred, see below.**
+8. ☑ Path A (OAuth one-tap) — **shipped.** A dedicated broker endpoint
+   `POST /api/pfp/set-avatar` (freeq `auth-broker`, commit `c87a348`) does the
+   write on the user's behalf, exactly like the existing `/api/graph/*`
+   delegation. The connect modal leads with “continue with Bluesky (one-tap)”;
+   app password remains the fallback.
 
-## OAuth one-tap: why it's deferred (not just undone)
+## OAuth one-tap: how it works (the safe design)
 
-"One-tap" means the browser never handles a credential — but that requires the
-**broker to write to the user's PDS on their behalf**, and the current broker
-can't:
+The insight that made it safe: the broker **already** writes to users' PDSs
+(`/api/graph/follow` does a `createRecord`) using the stored DPoP-bound session,
+authenticated by the `broker_token`. So no scope or consent change was needed —
+bare `atproto` already grants the transitional writes — and we did **not** touch
+the identity-only `irc.freeq.at` sign-in path.
 
-- It requests **identity-only** OAuth scope (`"atproto"`, `lib.rs`) — no
-  `blob:*` / `repo:*` write grant.
-- It exposes **no XRPC proxy** (`/xrpc/* → 404`); it only mints a session token
-  for `irc.freeq.at`'s own auth.
-- AT Proto access tokens are **DPoP-bound**, so even if the browser held the
-  token it couldn't sign requests without the broker's DPoP key (and handing
-  that key to the browser would defeat DPoP entirely).
+`/api/pfp/set-avatar {broker_token, image_b64, post}` is a *narrow* sibling of
+graph_follow, scoped to three actions on the caller's OWN repo: `uploadBlob`,
+set `app.bsky.actor.profile.avatar` (read-merge-write, preserving other
+fields), and one optional `app.bsky.feed.post`. It reuses `authed_access_token`
++ the DPoP nonce-retry helper; PNG-magic + 1 MB guards; `pfp.freeq.at` and
+`freeqworld.boxd.sh` added to the CORS list, `ALLOWED_ORIGINS`, and
+`is_valid_return_to`. The browser never holds a credential — it just renders the
+deterministic PFP for the OAuth-verified DID and hands the bytes to the broker.
+Covered by broker tests (happy path field-preservation + facet bytes;
+401/400/403 rejections) and a client headless test of the return flow.
 
-Doing it properly means, in the **shared production sign-in broker**: widen the
-requested scope (changes the consent screen for *every* `irc.freeq.at` user),
-persist per-user DPoP keys + tokens, and add a DPoP-signing XRPC write proxy
-for `uploadBlob`/`putRecord`/`createRecord`. That is security-sensitive, only
-testable via interactive Bluesky login, and gates all real sign-ins — not a
-thing to deploy blind before a launch. The app-password path already delivers
-the whole feature reliably, so one-tap stays a documented follow-up: add a
-broker XRPC proxy + write scope, add `pfp.freeq.at`/`freeqworld.boxd.sh` to the
-broker allowlist, then slot it behind the existing `BskyWriter` surface.
+Remaining follow-up: fold this into the `BskyWriter` surface on the client for
+symmetry with the app-password path (cosmetic), and revisit if/when Bluesky
+retires transitional scopes (then request granular `blob:*`/`repo:*` in a
+PFP-only authorize `intent`, still separate from the sign-in flow).
 
 ### Shipped auth note
 App password is used **once, in memory, never stored**; the connect modal is
