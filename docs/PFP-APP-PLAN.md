@@ -184,15 +184,28 @@ PDS allows within the session.
 
 ## Milestones
 
-1. ☐ **Spike (1h):** does `auth.freeq.at` proxy authenticated write XRPC, and
-   with what scope? Decide Path A vs B. (Determines everything.)
-2. ☐ Reveal-only app at `/id`: handle → derived PFP preview (portrait +
-   explorer), no auth. *Already shippable & shareable.*
-3. ☐ `BskyWriter` (Path B app-password) → set avatar (preserve profile fields).
-4. ☐ Optional post with image embed + link facet.
-5. ☐ Path A (OAuth) behind the same interface if the spike is green.
-6. ☐ Success screen + cross-promo CTA into FreeqWorld.
-7. ☐ Tests; deploy at `/id`; (later) `pfp.freeq.at` vanity domain.
+1. ☑ **Spike:** `auth.freeq.at` exposes `/health` only — **no XRPC proxy**
+   (`/xrpc/*` → 404). Path A (OAuth write proxy) would need cross-repo broker
+   changes. Path B (app password) has open CORS on the entryway *and* on real
+   PDS hosts (`*.host.bsky.network`). **Decision: ship Path B now.**
+2. ☑ Reveal app at `/id`: handle (or `surprise me`) → derived PFP (explorer
+   default + portrait), trait card, PNG download. No auth. Live.
+3. ☑ `BskyWriter` (`pfp/src/atproto.ts`, Path B app-password) → resolve
+   handle→DID→PDS, createSession, uploadBlob, read-merge-write profile
+   (avatar swapped, other fields preserved).
+4. ☑ Optional post with image embed + UTF-8-correct link facet.
+5. ☑ Success screen + cross-promo CTA into FreeqWorld.
+6. ☑ Tests (8 unit + headless end-to-end with mocked AT Proto); deploy at `/id`.
+7. ☐ Path A (OAuth one-tap) behind the same interface — needs a broker XRPC
+   proxy (cross-repo). Do when the broker grows one.
+8. ☐ `pfp.freeq.at` vanity domain (CNAME + broker allowlist entry).
+
+### Shipped auth note
+App password is used **once, in memory, never stored**; the connect modal is
+explicit that it is not the account's main password. The avatar is re-derived
+from the *authenticated* DID after login, so it is genuinely the user's
+identity-face (surprise-me identities can't be pushed to an account they don't
+own).
 
 ## Risks
 

@@ -4,12 +4,13 @@
 
 import { generateKeypair, didFromPublicKey } from '../../shared/src/signing'
 import { renderPfp, traitSummary, canvasToPngBlob, type Variant } from './render'
+import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
 let currentDid: string | null = null
 let currentLabel = ''
-let variant: Variant = 'portrait'
+let variant: Variant = 'explorer'
 
 async function resolveHandle(handle: string): Promise<string> {
   const clean = handle.trim().replace(/^@/, '')
@@ -108,9 +109,74 @@ function bind(): void {
       void paint()
     })
   }
-  $('setbsky').addEventListener('click', () => {
-    toast('Setting it on Bluesky is the next milestone — see docs/PFP-APP-PLAN.md')
+  $('setbsky').addEventListener('click', openConnect)
+  $('c-cancel').addEventListener('click', () => $('connect').classList.add('hidden'))
+  $('c-go').addEventListener('click', () => void doConnect())
+  $<HTMLInputElement>('c-pass').addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter') void doConnect()
   })
+  $('done-close').addEventListener('click', () => $('done').classList.add('hidden'))
+}
+
+function openConnect(): void {
+  const guess = $<HTMLInputElement>('handle').value.trim() || currentLabel.replace(/^@/, '')
+  if (guess && !guess.includes(' ') && guess.includes('.')) $<HTMLInputElement>('c-handle').value = guess
+  $('c-err').textContent = ''
+  $('c-status').textContent = ''
+  $<HTMLButtonElement>('c-go').disabled = false
+  $('connect').classList.remove('hidden')
+  $<HTMLInputElement>('c-handle').value ? $('c-pass').focus() : $('c-handle').focus()
+}
+
+async function doConnect(): Promise<void> {
+  const handle = $<HTMLInputElement>('c-handle').value.trim()
+  const pass = $<HTMLInputElement>('c-pass').value
+  const alsoPost = $<HTMLInputElement>('c-post').checked
+  const err = $('c-err')
+  const status = $('c-status')
+  err.textContent = ''
+  if (!handle || !pass) {
+    err.textContent = 'handle and app password are both required'
+    return
+  }
+  $<HTMLButtonElement>('c-go').disabled = true
+  try {
+    status.textContent = 'signing in…'
+    const session = await login(handle, pass)
+    // the avatar is derived from the AUTHENTICATED DID — truly their identity
+    currentDid = session.did
+    currentLabel = `@${session.handle}`
+    await paint()
+
+    status.textContent = 'rendering your character…'
+    const { canvas } = await renderPfp(session.did, variant, 1000)
+    const bytes = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer())
+
+    status.textContent = 'uploading…'
+    const avatarBlob = await uploadBlob(session, bytes, 'image/png')
+    status.textContent = 'setting your avatar…'
+    await setAvatar(session, avatarBlob)
+
+    if (alsoPost) {
+      status.textContent = 'posting…'
+      const postBlob = await uploadBlob(session, bytes, 'image/png')
+      await postAboutIt(session, postBlob)
+    }
+
+    // never keep the password around
+    $<HTMLInputElement>('c-pass').value = ''
+    $('connect').classList.add('hidden')
+    const prof = $<HTMLAnchorElement>('done-profile')
+    prof.href = `https://bsky.app/profile/${session.handle}`
+    $('done-msg').textContent = alsoPost
+      ? `@${session.handle} is now your FreeqWorld self — and you posted about it.`
+      : `@${session.handle}'s avatar is now your FreeqWorld self.`
+    $('done').classList.remove('hidden')
+  } catch (e) {
+    err.textContent = String((e as Error).message ?? e)
+    status.textContent = ''
+    $<HTMLButtonElement>('c-go').disabled = false
+  }
 }
 
 bind()

@@ -44,7 +44,7 @@
     button.ghost { background:transparent; color:var(--ink); border:1px solid var(--border); font-weight:400; }
     button.ghost.active { border-color:var(--cyan); color:var(--cyan); }
     .surprise { margin-top:10px; font-size:.9rem; color:var(--dim); }
-    .hidden { display:none; }
+    .hidden { display:none !important; }
     #result { margin-top:22px; display:flex; flex-direction:column; align-items:center; gap:12px; }
     canvas { image-rendering:pixelated; width:280px; height:280px; border-radius:16px; border:1px solid var(--border); background:#0d0d14; }
     .label { color:var(--amber); font-weight:700; }
@@ -61,6 +61,25 @@
       background:var(--panel2); border:1px solid var(--border); color:var(--ink);
       padding:10px 14px; border-radius:8px; font-size:.85rem; max-width:90vw;
     }
+    .overlay {
+      position:fixed; inset:0; background:rgba(6,6,10,.72); display:flex;
+      align-items:center; justify-content:center; padding:16px; z-index:10;
+    }
+    .modal { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:20px; width:min(440px,100%); }
+    .modal h2 { margin:0 0 4px; font-size:1.15rem; }
+    .modal .hint { color:var(--dim); font-size:.82rem; line-height:1.5; margin:0 0 14px; }
+    .modal label { display:block; font-size:.8rem; color:var(--dim); margin:10px 0 4px; }
+    .modal input[type=text], .modal input[type=password] {
+      width:100%; background:var(--panel2); border:1px solid var(--border); color:var(--ink);
+      padding:10px 12px; border-radius:8px; font:inherit;
+    }
+    .modal .check { display:flex; align-items:center; gap:8px; margin:14px 0 4px; font-size:.86rem; color:var(--ink); }
+    .modal .err { color:var(--red); font-size:.82rem; min-height:1.1em; margin-top:8px; }
+    .modal .status { color:var(--cyan); font-size:.82rem; min-height:1.1em; margin-top:8px; }
+    .modal .btns { display:flex; gap:8px; margin-top:14px; }
+    .modal .btns button { flex:1; }
+    .big { font-size:2rem; text-align:center; }
+    .center { text-align:center; }
   </style>
 </head>
 <body>
@@ -78,8 +97,8 @@
       <canvas id="pfp" width="512" height="512"></canvas>
       <div class="label" id="label"></div>
       <div class="variants">
-        <button class="ghost active" id="v-portrait">portrait</button>
-        <button class="ghost" id="v-explorer">explorer</button>
+        <button class="ghost active" id="v-explorer">explorer</button>
+        <button class="ghost" id="v-portrait">portrait</button>
       </div>
       <div class="traits" id="traits"></div>
       <div class="did" id="did"></div>
@@ -92,6 +111,39 @@
   </div>
 
   <div class="foot">part of <a href="/">FreeqWorld</a> — a federated chat protocol rendered as a 1992 multiplayer RPG.</div>
+
+  <!-- connect (app-password) modal -->
+  <div id="connect" class="overlay hidden">
+    <div class="modal">
+      <h2>Set it as your Bluesky avatar</h2>
+      <p class="hint">Uses a <b>Bluesky app password</b> (Settings → Privacy &amp; Security → App Passwords). It runs entirely in your browser, is used once, and is never stored. Your main password is never entered here.</p>
+      <label for="c-handle">handle</label>
+      <input type="text" id="c-handle" placeholder="you.bsky.social" autocomplete="username" spellcheck="false" />
+      <label for="c-pass">app password</label>
+      <input type="password" id="c-pass" placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="current-password" />
+      <label class="check"><input type="checkbox" id="c-post" checked /> also post about it (with the image)</label>
+      <div class="err" id="c-err"></div>
+      <div class="status" id="c-status"></div>
+      <div class="btns">
+        <button class="ghost" id="c-cancel">cancel</button>
+        <button id="c-go">set it ✦</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- success modal -->
+  <div id="done" class="overlay hidden">
+    <div class="modal center">
+      <div class="big">✦</div>
+      <h2>Your avatar is set</h2>
+      <p class="hint" id="done-msg">Your FreeqWorld self is now your Bluesky face.</p>
+      <div class="btns">
+        <a id="done-profile" target="_blank" style="flex:1"><button style="width:100%">view my profile →</button></a>
+        <a href="/" style="flex:1"><button class="ghost" style="width:100%">enter FreeqWorld →</button></a>
+      </div>
+      <div style="margin-top:10px"><button class="ghost" id="done-close" style="width:100%">close</button></div>
+    </div>
+  </div>
 
   <script type="module" src="./src/main.ts"></script>
 </body>
