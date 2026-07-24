@@ -24,6 +24,46 @@ function shade(hex: string, f: number): string {
   return `rgb(${c(r)},${c(g)},${c(b)})`
 }
 
+function rgbToHsl(hex: string): { h: number; s: number; l: number } {
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255) as [number, number, number]
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+  }
+  return { h, s, l }
+}
+
+function hslCss(h: number, s: number, l: number): string {
+  return `hsl(${(((h % 360) + 360) % 360).toFixed(0)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`
+}
+
+function hueDist(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+
+/** A backdrop hue that stays clear of the character's skin (the focal head), so
+ *  brown-on-brown / warm-on-warm never happens. Deterministic — derived from the
+ *  same traits, only *steered* for contrast; the core avatar traits are never
+ *  changed. Natural tint is the accent colour; if that sits too near the skin
+ *  hue (or is near-grey), we swing to the skin's complement. */
+function backdropTint(t: Avatar['traits']): { h: number; s: number } {
+  const skin = rgbToHsl(String(t.skin_palette))
+  const acc = rgbToHsl(String(t.accent_palette))
+  let h = acc.h
+  if (acc.s < 0.2 || hueDist(acc.h, skin.h) < 70) h = (skin.h + 165) % 360
+  return { h, s: Math.min(0.6, Math.max(0.42, acc.s || 0.5)) }
+}
+
 /** Native-resolution (16×24) canvas of one sprite frame. */
 function spriteCanvas(px: SpritePixels): HTMLCanvasElement {
   const cv = document.createElement('canvas')
@@ -44,17 +84,16 @@ function spriteCanvas(px: SpritePixels): HTMLCanvasElement {
   return cv
 }
 
-function drawScene(ctx: CanvasRenderingContext2D, size: number, t: Avatar['traits']): void {
+function drawScene(ctx: CanvasRenderingContext2D, size: number, bd: { h: number; s: number }): void {
   const floorY = size * 0.7
-  // floor slab (from the wearer's own palette so the scene is theirs)
-  ctx.fillStyle = shade(String(t.pants_skirt), 0.75)
+  // floor slab in the (skin-contrasting) backdrop family, kept dark
+  ctx.fillStyle = hslCss(bd.h, bd.s * 0.5, 0.14)
   ctx.fillRect(0, floorY, size, size - floorY)
   // glowing floor tiles
   const cell = size / 16
-  const glow = String(t.accent_palette)
   for (let i = 0; i < 16; i++) {
     if (i % 3 === 0) {
-      ctx.fillStyle = shade(glow, 0.5)
+      ctx.fillStyle = hslCss(bd.h, bd.s, 0.3)
       ctx.fillRect(i * cell, floorY, cell, cell * 0.35)
     }
   }
@@ -76,7 +115,8 @@ export async function renderPfp(did: string, variant: Variant, size = 1024): Pro
   const avatar = await deriveAvatar(did)
   const t = avatar.traits
   const accent = String(t.accent_palette)
-  const shirt = String(t.shirt_jacket)
+  // backdrop hue steered away from the skin so the head never blends in
+  const bd = backdropTint(t)
 
   const cv = document.createElement('canvas')
   cv.width = size
@@ -87,15 +127,15 @@ export async function renderPfp(did: string, variant: Variant, size = 1024): Pro
   ctx.fillStyle = '#0d0d14'
   ctx.fillRect(0, 0, size, size)
 
-  // radial glow behind the character, tinted by their own colors
+  // radial glow behind the character, in a hue that contrasts the skin
   const g = ctx.createRadialGradient(size / 2, size * 0.42, size * 0.04, size / 2, size * 0.5, size * 0.62)
-  g.addColorStop(0, shade(accent, 0.6))
-  g.addColorStop(0.45, shade(shirt, 0.3))
+  g.addColorStop(0, hslCss(bd.h, bd.s, 0.3))
+  g.addColorStop(0.44, hslCss(bd.h, bd.s * 0.85, 0.15))
   g.addColorStop(1, '#0d0d14')
   ctx.fillStyle = g
   ctx.fillRect(0, 0, size, size)
 
-  if (variant === 'explorer') drawScene(ctx, size, t)
+  if (variant === 'explorer') drawScene(ctx, size, bd)
 
   // the sprite — nearest-neighbor upscale, no smoothing
   ctx.imageSmoothingEnabled = false
