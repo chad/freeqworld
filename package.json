@@ -17,6 +17,8 @@
   "dependencies": {
     "@freeq/sdk": "file:./vendor/freeq-sdk",
     "tweetnacl": "^1.0.3",
+    "vite": "^5.4.0",
+    "vite-node": "^2.1.9",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -24,7 +26,6 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
     "typescript": "^5.6.0",
-    "vite": "^5.4.0",
     "vitest": "^2.1.0"
   }
 }

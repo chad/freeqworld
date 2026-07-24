@@ -1,0 +1,23 @@
+name = "freeqworld"
+
+# The town server is TypeScript run through vite-node (same as the long-running
+# production process on the boxd VM). `vite` and `vite-node` are therefore real
+# runtime dependencies, not dev ones — see package.json.
+[build]
+onbuild = [
+  "npx vite build client",
+  "npx vite build pfp",
+]
+
+# FIMP_START makes server/src/main.ts boot the towns when it isn't argv[1].
+[[env]]
+key = "FIMP_START"
+value = "1"
+
+[services.web]
+# Serves the built world client (client/dist), the FreeqWorld ID app at /id
+# (pfp/dist, built with base /id/), and town A "Freeq City" on PORT_A (8787).
+# Town B "Neon Wharf" listens on 8788 for server-to-server peering only and is
+# deliberately not routed publicly — same as the boxd deployment.
+command = "npx vite-node server/src/main.ts"
+port = 8787
