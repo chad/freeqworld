@@ -6,12 +6,20 @@ Read this before touching production. The topology has one genuine trap
 ## The pieces
 
 ```
-freeqworld.boxd.sh          boxd VM "freeqworld" — static client + demo towns + NPC agents
-freeqworld.boxd.sh/id       the FreeqWorld ID / PFP microapp (served by the town server)
-irc.freeq.at                Hetzner box (87.99.152.98) — freeq-server in Docker + nginx
-auth.freeq.at               SAME Hetzner box — freeq-auth-broker in Docker  ⚠ see below
+world.freeq.at              PRODUCTION world — miren app `freeqworld` on the `freeq`
+                            cluster (Hetzner 87.99.152.98), fronted by an nginx vhost
+world.freeq.at/id           the FreeqWorld ID / PFP microapp (served by the town server)
+freeqworld.boxd.sh          301 → world.freeq.at (boxd VM, freeqworld-redirect.service).
+                            The VM still runs the NPC agents — see below.
+irc.freeq.at                160.202.129.155 (tech.blueyard.com) — freeq-server via systemd
+auth.freeq.at               Hetzner 87.99.152.98 — freeq-auth-broker in Docker  ⚠ see below
 pfp.freeq.at                SAME Hetzner box — nginx STATIC vhost of the PFP app (root base)
 ```
+
+> Moved 2026-07-24: the world used to be served from `freeqworld.boxd.sh`
+> directly. It now lives at **world.freeq.at**; the boxd URL is a permanent
+> redirect. `irc.freeq.at` also no longer lives on the Hetzner box — it moved
+> to tech.blueyard.com (160.202.129.155).
 
 ## pfp.freeq.at (the PFP microapp, vanity domain)
 
@@ -45,14 +53,48 @@ This lives in the freeq repo's `freeq-auth-broker` (a narrow sibling of
 procedure). `pfp.freeq.at` and `freeqworld.boxd.sh` are in the broker's CORS
 list, `ALLOWED_ORIGINS`, and `is_valid_return_to`; landed on `main` @ `c87a348`.
 
-## freeqworld.boxd.sh (this repo)
+## world.freeq.at — the world (miren app `freeqworld`)
 
-A boxd VM named `freeqworld` (auto-suspend disabled — the agents hold live
-IRC connections). Two systemd services, both `Restart=always`:
+A miren app on the **`freeq`** cluster. Config lives in `.miren/app.toml`:
+`onbuild` builds both clients (`vite build client`, `vite build pfp`) inside the
+image, then the town server runs through **vite-node** on port 8787. Town B
+("Neon Wharf", 8788) is server-to-server peering only and is deliberately not
+routed publicly — same as the old boxd deployment.
 
-- **`freeqworld.service`** — `FIMP_START=1 npx vite-node server/src/main.ts`
-  in `/home/boxd/freeqworld`, port 8787 behind the boxd proxy. Serves the
-  built client (`client/dist`) and the two local demo towns.
+**Deploy:**
+
+```sh
+cd freeqworld            # this repo
+miren deploy -C freeq    # ALWAYS pin the cluster
+miren logs -C freeq --last 5m | grep -v '\[build\]'   # confirm "FreeqWorld up"
+```
+
+Route + TLS are already in place; you only touch these when adding a host:
+
+```sh
+miren route set world.freeq.at freeqworld -C freeq
+# nginx owns :80/:443 on the box, so miren needs a vhost in front that proxies
+# to the miren router on 127.0.0.1:8090 and passes WebSocket upgrades
+# (the town server speaks WS at /ws and /fed):
+#   /etc/nginx/sites-available/world.freeq.at   (see that file for the pattern)
+# then: certbot --nginx -d world.freeq.at
+```
+
+⚠ **`vite` and `vite-node` are runtime `dependencies`, not devDependencies.**
+The town server is TypeScript executed by vite-node in production. vite-node
+was previously only a transitive dev dep of vitest, so a production install
+dropped the runtime entirely and the app crash-looped. Do not "tidy" them back
+into devDependencies.
+
+## freeqworld.boxd.sh — redirect + NPC agents
+
+The boxd VM named `freeqworld` (auto-suspend disabled — the agents hold live
+IRC connections) no longer serves the world. It runs two `Restart=always`
+systemd services:
+
+- **`freeqworld-redirect.service`** — `/home/boxd/redirect-to-world.mjs`, a
+  dependency-free node server on 8787 that 301s every path to
+  `https://world.freeq.at`, keeping old links and OG cards alive.
 - **`freeqworld-agents.service`** — `node scripts/world-agents.mjs`. NPC
   identity seeds and the persistent quest ledger live in `.agents/`
   (gitignored — copy seeds if you rebuild the VM, or the agents get new
@@ -60,13 +102,16 @@ IRC connections). Two systemd services, both `Restart=always`:
   journald on the VM). Note: node lives at `/usr/local/bin/node` on this VM,
   and the unit files reference that path explicitly.
 
-**To deploy client or agent changes:**
+`freeqworld.service` (the old town server) is **stopped and disabled**. The
+agents are plain IRC clients pointed at `wss://irc.freeq.at/irc` — they have no
+dependency on the town server, which is why they can keep running here while
+the world is served from miren.
+
+**To deploy agent changes:**
 
 ```sh
-boxd exec freeqworld -- 'cd freeqworld && git pull && npx vite build client'
-# client changes: done (served per-request from client/dist)
-# agent/server changes additionally need:
-boxd exec freeqworld -- 'sudo systemctl restart freeqworld-agents'   # or freeqworld
+boxd exec freeqworld -- 'cd freeqworld && git pull'
+boxd exec freeqworld -- 'sudo systemctl restart freeqworld-agents'
 ```
 
 Do NOT run long-lived processes on the VM via `nohup … &` under `boxd exec`
@@ -106,7 +151,11 @@ Broker facts that matter to FreeqWorld:
   in `freeq-auth-broker/src/lib.rs`) are **compiled in**. Serving FreeqWorld
   from a new domain means a broker code change + redeploy, or Bluesky
   sign-in shows users a raw "Invalid return_to URL" error.
-  `freeqworld.boxd.sh` was added 2026-07-21 (freeq commit `68324e9`).
+  `freeqworld.boxd.sh` was added 2026-07-21 (freeq commit `68324e9`), and
+  **`world.freeq.at` on 2026-07-24 (freeq commit `77d6645`)** — three sites in
+  `lib.rs`: the CORS `AllowOrigin` list, `ALLOWED_ORIGINS`, and
+  `is_valid_return_to`. Verify with:
+  `curl -sD- -o/dev/null -H 'Origin: https://world.freeq.at' -X OPTIONS https://auth.freeq.at/api/pfp/set-avatar | grep -i allow-origin`
 - Broker sessions persist in the `freeq-broker-data` volume; container
   restarts don't log users out.
 - Rollback: `docker stop freeq-auth-broker && docker rm freeq-auth-broker`
