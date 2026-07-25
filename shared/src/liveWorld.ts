@@ -178,19 +178,19 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
         capabilities: ['inspect', 'read', 'join'],
         persistence: 'persistent',
       })
-      // The work queue as furniture: open courier runs and the deeds ledger,
-      // posted where people gather.
-      objects.push({
-        schema: 'freeq.at/world/object/v1',
-        id: 'questboard',
-        type: 'board',
-        position: [Math.floor(width / 2) + 3, 4],
-        sprite: 'quest board',
-        label: 'Quest board',
-        capabilities: ['inspect', 'read', 'claim'],
-        persistence: 'persistent',
-      })
     }
+    // The work queue as furniture. Every room gets a board — wherever you land,
+    // there is work to claim, and you never have to know the incantation.
+    objects.push({
+      schema: 'freeq.at/world/object/v1',
+      id: 'questboard',
+      type: 'board',
+      position: [Math.floor(width / 2) + 3, 4],
+      sprite: 'quest board',
+      label: 'Quest board',
+      capabilities: ['inspect', 'read', 'claim'],
+      persistence: 'persistent',
+    })
     return {
       schema: 'freeq.at/world/room/v1',
       channel: c.name,

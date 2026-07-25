@@ -938,8 +938,20 @@ export class App {
         if (dist < 2.2 && (!nearest || dist < nearest.dist)) nearest = { did: m.did, dist }
       }
     }
-    if (nearest) {
+    // ...but furniture wins when you're standing closer to it than to them,
+    // so a bystander parked on the quest board can never block it
+    const room0 = this.rooms.get(this.channel)
+    let nearObj: { id: string; dist: number } | null = null
+    for (const o of room0?.objects ?? []) {
+      const d = Math.hypot(o.position[0] + 0.5 - this.me.x, o.position[1] + 0.5 - this.me.y)
+      if (d < 1.7 && (!nearObj || d < nearObj.dist)) nearObj = { id: o.id, dist: d }
+    }
+    if (nearest && (!nearObj || nearest.dist <= nearObj.dist)) {
       void this.showIdentityCard(nearest.did)
+      return
+    }
+    if (nearObj) {
+      this.showObjectCard(nearObj.id)
       return
     }
     // a painting on the wall?
