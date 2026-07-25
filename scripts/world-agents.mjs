@@ -52,6 +52,12 @@ function identityFor(name) {
 
 const POS_TAG = '+freeq.at/world-pos'
 
+/** Which run the courier asked for. Defaults to the classic courier run. */
+function questKind(text) {
+  const m = /quest\s+(survey|rekindle)/i.exec(text)
+  return m ? m[1].toLowerCase() : 'courier'
+}
+
 const AGENTS = [
   {
     nick: 'archivist',
@@ -79,15 +85,19 @@ const AGENTS = [
     persona: 'The Cartographer',
     brain: (ctx) => {
       if (/quest/i.test(ctx.text)) {
-        ctx.issueQuest(ctx.from)
+        ctx.issueQuest(ctx.from, false, questKind(ctx.text))
         return `i've sent you a sealed envelope, ${ctx.from}. check your DMs.`
       }
       const top = ctx.directory.slice(0, 6).map((d) => `${d.name} (${d.count})`).join(', ')
       return `every room in the world is a real channel on this server. the liveliest right now: ${top}. say "quest" and i will put you to work.`
     },
     onDm: (ctx) => {
-      if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true)
-      return `i map channels into rooms. say "quest" for a courier run — real work, verified in the real channel.`
+      // a survey answer is a plain DM naming the topic — check it before
+      // treating the message as a new request
+      const surveyed = ctx.trySurvey(ctx.from, ctx.text)
+      if (surveyed) return surveyed
+      if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
+      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, or "quest rekindle" to wake a quiet one — real work, verified in the real channel.`
     },
   },
 ]
@@ -144,26 +154,63 @@ for (const [i, agent] of AGENTS.entries()) {
     try { writeFileSync(questPath, JSON.stringify(Object.fromEntries(quests))) } catch { /* disk hiccup */ }
   }
   const AGENT_NICKS = AGENTS.map((a) => a.nick)
-  const issueQuest = (nick, viaDm = false) => {
+  const questBrief = (nick, q) => {
+    if (q.kind === 'survey')
+      return `SURVEY for ${nick}: travel to ${q.target}, read what the room says it is, and DM me its topic. i will check your report against the register.`
+    if (q.kind === 'rekindle')
+      return `REKINDLE for ${nick}: ${q.target} has gone quiet. go there and say something worth answering — i keep a post there and will witness it.`
+    return `COURIER RUN for ${nick}: carry this sealed phrase to ${q.target} and say it aloud: ${q.phrase} — i keep a post there and will confirm the delivery myself.${q.bonus ? ' that room is quiet; the run pays double.' : ''}`
+  }
+
+  const issueQuest = (nick, viaDm = false, kind = 'courier') => {
     // idempotent: a pending quest is re-sent, never replaced — DM replays on
     // reconnect (or an impatient courier) must not invalidate the envelope
     const existing = quests.get(nick.toLowerCase())
     if (existing) {
-      const reminder = `your envelope is still sealed, ${nick}: carry ${existing.phrase} to ${existing.target} and say it aloud.${existing.bonus ? ' the run still pays double.' : ''}`
+      const reminder = `your envelope is still sealed, ${nick}. ${questBrief(nick, existing)}`
       if (!viaDm) client.sendMessage(nick, reminder)
       return reminder
     }
     // quieter rooms pay double — couriers carry life where there is none
     const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
-    const target = ranked[0] ?? CHANNELS[0]
-    const bonus = (history.get(target)?.length ?? 0) < 5
-    const phrase = `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
-    quests.set(nick.toLowerCase(), { phrase, target, bonus })
+    const quietest = ranked[0] ?? CHANNELS[0]
+    let q
+    if (kind === 'survey') {
+      // only ask about rooms whose topic we can actually check
+      const known = directory.filter((d) => CHANNELS.includes(d.name) && (d.topic ?? '').trim().length > 8)
+      const pick = known[Math.floor(Math.random() * known.length)]
+      if (!pick) return `nothing needs charting right now, ${nick} — say "quest" for a courier run instead.`
+      q = { kind: 'survey', target: pick.name, bonus: false }
+    } else if (kind === 'rekindle') {
+      q = { kind: 'rekindle', target: quietest, bonus: true }
+    } else {
+      q = { kind: 'courier', phrase: `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`, target: quietest, bonus: (history.get(quietest)?.length ?? 0) < 5 }
+    }
+    quests.set(nick.toLowerCase(), q)
     saveQuests()
-    console.log(`[${agent.nick}] quest issued: ${nick} -> ${target} (${phrase}${bonus ? ', x2' : ''})`)
-    const brief = `COURIER RUN for ${nick}: carry this sealed phrase to ${target} and say it aloud: ${phrase} — i keep a post there and will confirm the delivery myself.${bonus ? ' that room is quiet; the run pays double.' : ''}`
+    console.log(`[${agent.nick}] quest issued (${q.kind}): ${nick} -> ${q.target}${q.phrase ? ` (${q.phrase})` : ''}${q.bonus ? ', x2' : ''}`)
+    const brief = questBrief(nick, q)
     if (!viaDm) client.sendMessage(nick, brief)
     return brief
+  }
+
+  /** A survey is completed over DM: the courier reports the topic they read. */
+  const trySurvey = (nick, text) => {
+    const q = quests.get(nick.toLowerCase())
+    if (!q || q.kind !== 'survey') return null
+    const entry = directory.find((d) => d.name === q.target)
+    const topic = (entry?.topic ?? '').toLowerCase()
+    if (!topic) return null
+    // accept a report that carries the distinctive words of the real topic
+    const words = topic.split(/\W+/).filter((w) => w.length > 3)
+    const said = text.toLowerCase()
+    const hits = words.filter((w) => said.includes(w)).length
+    if (hits < Math.min(2, words.length)) return null
+    quests.delete(nick.toLowerCase())
+    saveQuests()
+    console.log(`[${agent.nick}] quest complete (survey): ${nick} charted ${q.target}`)
+    setTimeout(() => client.sendMessage(q.target, `⭐ ${nick} charted this room and the register agrees. the map is truer than it was.`), 700)
+    return `that matches the register, ${nick}. ⭐ ${q.target} is charted. say "quest" whenever you want another run.`
   }
   const ctxFor = (msg, ch) => ({
     agent,
@@ -173,6 +220,7 @@ for (const [i, agent] of AGENTS.entries()) {
     allHistory: [...history.values()].flat(),
     directory,
     issueQuest,
+    trySurvey,
   })
 
   const lastReply = new Map()
@@ -199,13 +247,21 @@ for (const [i, agent] of AGENTS.entries()) {
 
     // quest completion: the right courier says the right phrase in the right room
     const quest = quests.get(msg.from.toLowerCase())
-    if (quest && ch === quest.target && msg.text.toUpperCase().includes(quest.phrase.toUpperCase())) {
+    const isCourierDelivery = quest?.kind !== 'rekindle' && quest?.phrase && ch === quest.target && msg.text.toUpperCase().includes(quest.phrase.toUpperCase())
+    // a rekindle is witnessed, not spoken: any real sentence in the quiet room
+    const isRekindle = quest?.kind === 'rekindle' && ch === quest.target && msg.text.trim().length >= 12
+    if (quest && (isCourierDelivery || isRekindle)) {
       quests.delete(msg.from.toLowerCase())
       saveQuests()
-      console.log(`[${agent.nick}] quest complete: ${msg.from} delivered ${quest.phrase} in ${ch}`)
+      console.log(`[${agent.nick}] quest complete (${quest.kind}): ${msg.from} in ${ch}`)
       const stars = quest.bonus ? '⭐⭐' : '⭐'
       setTimeout(() => {
-        client.sendMessage(ch, `${stars} delivery confirmed — ${msg.from} carried ${quest.phrase} across the network${quest.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`)
+        client.sendMessage(
+          ch,
+          isRekindle
+            ? `${stars} this room was silent, and ${msg.from} spoke first. rekindled — the channel bore witness.`
+            : `${stars} delivery confirmed — ${msg.from} carried ${quest.phrase} across the network${quest.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`,
+        )
         client.sendMessage(msg.from, `quest complete, ${msg.from}. ${stars} say "quest" whenever you want another run.`)
       }, 700)
       return

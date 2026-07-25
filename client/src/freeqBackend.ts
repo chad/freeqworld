@@ -13,6 +13,10 @@ import type { Identity } from './identity'
 import { decodePosTag, encodePosTag, POS_TAG } from './posTag'
 import { decodeTouchTag, encodeTouchTag, TOUCH_TAG } from './sparks'
 
+/** Client-to-client "where are you?" / "here" — cross-room, no server change. */
+const WHERE_TAG = '+freeq.at/where'
+const HERE_TAG = '+freeq.at/here'
+
 export interface BackendOptions {
   serverUrl: string // wss://irc.freeq.at/irc
   channel: string
@@ -33,6 +37,8 @@ export interface BackendOptions {
   onTouchObserved?: (fromNick: string, toNick: string) => void
   /** someone started/stopped typing in the current channel (real IRCv3 typing) */
   onTyping?: (nick: string, isTyping: boolean) => void
+  /** a peer answered "where are you?" with the room they're standing in */
+  onHere?: (nick: string, channel: string) => void
   /** someone's away state changed */
   onAway?: (nick: string, away: boolean) => void
 }
@@ -237,6 +243,22 @@ export class FreeqBackend {
           this.opts.onTouchObserved?.(nickFrom, touch.toNick)
         }
       }
+      // "where are you?" — a client-to-client query over a nick-targeted
+      // TAGMSG. Channel-scoped TAGMSG can't cross rooms, but a nick-targeted
+      // one can, so this is how following works with no server change. Plain
+      // IRC clients simply ignore both tags.
+      if (nickFrom && nickFrom !== this.client.nick) {
+        if (parsed.tags[WHERE_TAG] ?? parsed.tags[WHERE_TAG.slice(1)]) {
+          try {
+            this.client.sendTagmsg(nickFrom, { [HERE_TAG]: this.channel })
+          } catch {
+            /* not connected */
+          }
+        }
+        const here = parsed.tags[HERE_TAG] ?? parsed.tags[HERE_TAG.slice(1)]
+        if (here) this.opts.onHere?.(nickFrom, here)
+      }
+
       const value = parsed.tags[POS_TAG] ?? parsed.tags[POS_TAG.slice(1)]
       if (!value) return
       const target = parsed.params[0]
@@ -478,6 +500,15 @@ export class FreeqBackend {
 
   sendReaction(channel: string, targetMessage: string, reaction: string): void {
     this.client.sendReaction(channel, reaction, targetMessage)
+  }
+
+  /** Ask a peer which room they're in (they answer over a nick-targeted TAGMSG). */
+  askWhere(nick: string): void {
+    try {
+      this.client.sendTagmsg(nick, { [WHERE_TAG]: '?' })
+    } catch {
+      /* not connected */
+    }
   }
 
   sendPosition(channel: string, x: number, y: number, facing: WorldPosition['facing'], animation: WorldPosition['animation']): void {

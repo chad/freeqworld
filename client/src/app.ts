@@ -243,6 +243,7 @@ export class App {
         onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
         onTouch: (fromNick, ts, sig, signerDid) => this.onTouchIn(fromNick, ts, sig, signerDid),
         onTouchObserved: (fromNick, toNick) => this.onTouchObserved(fromNick, toNick),
+        onHere: (nick, channel) => this.onHere(nick, channel),
         onTyping: (nick, isTyping) => {
           if (isTyping) this.typingNicks.set(nick.toLowerCase(), performance.now() + 6000)
           else this.typingNicks.delete(nick.toLowerCase())
@@ -690,6 +691,26 @@ export class App {
         this.openDm(nick!)
       })
     }
+    // follow: ask them where they are (nick-targeted TAGMSG crosses rooms)
+    const followBtn = el('idcard-follow')
+    const canFollow = Boolean(nick && this.conn && 'askWhere' in this.conn && !this.isMe(did))
+    followBtn.classList.toggle('hidden', !canFollow)
+    if (canFollow) {
+      const fresh = followBtn.cloneNode(true) as HTMLElement
+      followBtn.replaceWith(fresh)
+      fresh.addEventListener('click', () => {
+        el('idcard').classList.add('hidden')
+        this.followTarget = nick!.toLowerCase()
+        ;(this.conn as FreeqBackend).askWhere(nick!)
+        this.toast(`👣 asking where ${nick} is…`)
+        window.setTimeout(() => {
+          if (this.followTarget === nick!.toLowerCase()) {
+            this.followTarget = null
+            this.toast(`${nick} didn't answer — they may be on a plain IRC client`)
+          }
+        }, 6000)
+      })
+    }
     el('idcard').classList.remove('hidden')
     await drawPreview(m?.avatar_did ?? did, el<HTMLCanvasElement>('idcard-avatar'))
   }
@@ -950,7 +971,9 @@ export class App {
     el('obj-type').textContent = o.type
     el('obj-caps').textContent = o.capabilities.join(', ')
     const body = el('obj-body')
-    if (o.id === 'directory' && this.town?.directory?.length) {
+    if (o.id === 'questboard') {
+      this.renderQuestBoard(body)
+    } else if (o.id === 'directory' && this.town?.directory?.length) {
       this.renderDirectory(body)
     } else {
       const bodies: Record<string, string> = {
@@ -966,6 +989,67 @@ export class App {
   }
 
   /** The real, live channel directory — click to travel (portal-directory, spec §7.5). */
+  /** The work queue as furniture: your run in hand, the deeds you've done, and
+   *  the runs you can take. Claiming DMs the Cartographer, who verifies
+   *  delivery in the real channel — the quest is a real protocol action. */
+  private renderQuestBoard(body: HTMLElement): void {
+    const q = this.activeQuest
+    const stars = this.journal.stars()
+    const rows: string[] = []
+
+    rows.push(
+      q
+        ? `<div style="border:1px solid var(--amber);padding:8px;margin-bottom:8px">
+             <div style="color:var(--amber);font-weight:700">✉ Run in hand</div>
+             <div style="margin-top:4px">Carry <b style="color:var(--cyan)">${escapeHtml(q.phrase)}</b> to <b style="color:var(--cyan)">${escapeHtml(q.target)}</b> and say it aloud.</div>
+             <div style="color:var(--dim);font-size:.82rem;margin-top:4px">The Cartographer keeps a post there and will confirm the delivery.</div>
+             <button data-go="${escapeHtml(q.target)}" style="margin-top:6px">travel to ${escapeHtml(q.target)} →</button>
+           </div>`
+        : `<div style="border:1px dashed var(--border);padding:8px;margin-bottom:8px;color:var(--dim)">
+             No run in hand. Claim one below — the Cartographer seals an envelope and DMs it to you.
+           </div>`,
+    )
+
+    rows.push(`<div style="color:var(--dim);font-size:.82rem;margin-bottom:6px">
+      ⭐ ${stars} courier ${stars === 1 ? 'star' : 'stars'} · 📍 ${this.journal.stampCount()} places · 🔥 ${this.journal.rekindled()} rekindled · 🤝 ${this.journal.introductions()} introductions
+    </div>`)
+
+    const offers: [string, string, string][] = [
+      ['courier', 'Courier run', 'Carry a sealed phrase to another channel and say it aloud. Quiet rooms pay double.'],
+      ['survey', 'Survey', 'Visit a room nobody has charted and report what you find.'],
+      ['rekindle', 'Rekindle', 'Speak first in a room that has been silent for over a day.'],
+    ]
+    rows.push('<div style="border-top:1px solid var(--border);padding-top:6px">')
+    for (const [id, label, desc] of offers) {
+      rows.push(`<div style="padding:4px 0">
+        <button data-claim="${id}">claim</button>
+        <b style="color:var(--cyan);margin-left:6px">${label}</b>
+        <div style="color:var(--dim);font-size:.8rem;margin-left:2px">${desc}</div>
+      </div>`)
+    }
+    rows.push('</div>')
+    rows.push('<div style="color:var(--dim);font-size:.76rem;margin-top:6px">Claiming sends a real DM to an agent that is a real client on this server. Delivery is verified in the real channel.</div>')
+    body.innerHTML = rows.join('')
+
+    for (const b of body.querySelectorAll<HTMLElement>('[data-claim]')) {
+      b.addEventListener('click', () => {
+        const kind = b.dataset.claim!
+        const conn = this.conn
+        if (!conn || !('sendDm' in conn)) return this.toast('quests need the freeq backend')
+        if (!this.identity) return this.toast('pick a name first — quests are signed work')
+        ;(conn as FreeqBackend).sendDm('cartographer', kind === 'courier' ? 'quest' : `quest ${kind}`)
+        el('objcard').classList.add('hidden')
+        this.toast('✉ the Cartographer is sealing your envelope…')
+      })
+    }
+    for (const b of body.querySelectorAll<HTMLElement>('[data-go]')) {
+      b.addEventListener('click', () => {
+        el('objcard').classList.add('hidden')
+        this.conn?.join(b.dataset.go!)
+      })
+    }
+  }
+
   private renderDirectory(body: HTMLElement): void {
     const directory = this.town?.directory ?? []
     const hidden = this.town?.hidden_channels ?? 0
@@ -1732,6 +1816,23 @@ export class App {
 
   // ---------- direct messages (real IRC PRIVMSGs, spec §6.5 private encounters) ----------
 
+  /** nick we asked "where are you?" and are waiting to hear back from */
+  private followTarget: string | null = null
+  /** the courier run currently in hand, parsed from the Cartographer's brief */
+  private activeQuest: { phrase: string; target: string } | null = null
+
+  private onHere(nick: string, channel: string): void {
+    if (this.followTarget !== nick.toLowerCase()) return
+    this.followTarget = null
+    if (channel === this.channel) {
+      this.toast(`👣 ${nick} is right here in ${channel}`)
+      return
+    }
+    this.toast(`👣 following ${nick} to ${channel}`)
+    this.audio.stinger('door')
+    this.conn?.join(channel)
+  }
+
   private onDmIn(fromNick: string, text: string, ts: number): void {
     // courier stars: an agent's verified quest completion carries ⭐s
     if (/quest complete/i.test(text)) {
@@ -1740,6 +1841,16 @@ export class App {
       this.updateSparkHud()
       this.toast(`${'⭐'.repeat(stars)} courier run complete — ${this.journal.stars()} stars`)
       this.audio.stinger('spark')
+      this.activeQuest = null
+    }
+    // remember the run in hand so the quest board can show it
+    const brief = /carry(?: this sealed phrase)? (?:to )?(#\S+)[^:]*:\s*(PKT-\w+)/i.exec(text) ?? /(PKT-\w+)[\s\S]*?(#\S+)/i.exec(text)
+    if (brief) {
+      const a = brief[1] ?? ''
+      const b = brief[2] ?? ''
+      const target = a.startsWith('#') ? a : b
+      const phrase = a.startsWith('#') ? b : a
+      if (target && phrase) this.activeQuest = { phrase, target }
     }
     const key = fromNick.toLowerCase()
     const thread = this.dmThreads.get(key) ?? []

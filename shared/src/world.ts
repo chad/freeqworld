@@ -59,6 +59,7 @@ export const LAUNCH_ROOMS: RoomManifest[] = [
       obj('kiosk', 'directory kiosk', 8, 5, 'Directory kiosk', ['inspect', 'read']),
       obj('how-terminal', 'terminal', 27, 6, 'How this works', ['inspect', 'read']),
       obj('news-board', 'bulletin board', 33, 5, 'News board', ['read', 'pin']),
+      obj('questboard', 'board', 22, 5, 'Quest board', ['inspect', 'read', 'claim']),
       obj('help-desk', 'agent console', 12, 16, 'Agent help desk', ['ask']),
       obj('fountain', 'fountain', 19, 11, 'Plaza fountain', ['inspect']),
     ],
