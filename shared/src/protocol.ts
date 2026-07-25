@@ -159,5 +159,7 @@ export type ServerFrame =
   | { t: 'presence'; channel: string; positions: WorldPosition[] }
   | { t: 'member'; channel: string; member: MemberInfo; online: boolean; silent?: boolean }
   | { t: 'music'; channel: string; state: import('./music').MusicState }
-  | { t: 'gate'; channel: string; rules: string[] }
+  /** a channel refused entry pending policy acceptance; `parked` is the room we
+   *  put the user in meanwhile, so the UI can say where they are */
+  | { t: 'gate'; channel: string; rules: string[]; parked?: string }
   | { t: 'error'; message: string }

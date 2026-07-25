@@ -290,12 +290,19 @@ export class FreeqBackend {
       this.gateCollecting = channel
       this.gateRules = []
       this.client.raw(`POLICY ${channel} RULES`)
+      // Park somewhere real, always. The old code only looked in the generated
+      // world and did nothing when it came up empty — which left the client in
+      // no room at all: blank map, empty roster, no way forward.
+      const fromWorld = this.world?.directory.find((d) => d.channel !== channel && !d.unlisted)?.channel
+      const fromList = [...this.listEntries]
+        .filter((e) => e.name !== channel)
+        .sort((a, b) => b.count - a.count)[0]?.name
+      const parked = fromWorld ?? fromList ?? (channel === '#general' ? '#lobby' : '#general')
       window.setTimeout(() => {
         this.gateCollecting = null
-        this.emit({ t: 'gate', channel, rules: this.gateRules })
+        this.emit({ t: 'gate', channel, rules: this.gateRules, parked })
       }, 700)
-      const fallback = this.world?.directory.find((d) => d.channel !== channel && !d.unlisted)?.channel
-      if (fallback) this.beginJoin(fallback, pending.isWelcome)
+      this.beginJoin(parked, pending.isWelcome)
     })
     this.client.on('systemMessage', (_target: string, text: string) => {
       if (!this.gateCollecting || !text) return

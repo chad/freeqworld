@@ -284,6 +284,10 @@ export class App {
       case 'gate': {
         el('gate-channel').textContent = frame.channel
         el('gate-rules').textContent = frame.rules.length ? frame.rules.join('\n') : 'This channel has an entry policy (no rules text published).'
+        // say plainly where they are meanwhile — a silent bounce reads as "broken"
+        if (frame.parked) {
+          this.toast(`🔒 ${frame.channel} asks you to accept its rules — waiting in ${frame.parked}`)
+        }
         el('gate').classList.remove('hidden')
         const accept = el('gate-accept')
         const fresh = accept.cloneNode(true) as HTMLElement // drop stale listeners

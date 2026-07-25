@@ -68,12 +68,13 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
 
   it('inserts the home channel even when LIST hides it (secret channels)', () => {
     const world = worldFromChannels(REAL_SAMPLE, { home: 'freeq' })
-    expect(world.spawn).toBe('#freeq')
     const entry = world.directory.find((d) => d.channel === '#freeq')!
     expect(entry.unlisted).toBe(true)
     const room = world.rooms.find((r) => r.channel === '#freeq')!
-    expect(room.template).toBe('plaza')
     expect(room.width).toBeGreaterThan(20) // the home room is not a closet just because LIST hides its count
+    // ...but a hidden, empty room is not somewhere to *arrive*: the spawn goes
+    // to the liveliest public channel instead (see the regression test below)
+    expect(world.spawn).toBe('#general')
   })
 
   it('turns the spawn room into a portal station: ranked arches on the north wall with live counts', () => {
@@ -82,9 +83,11 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
     const north = plaza.exits.filter((e) => e.direction === 'north')
     expect(north.length).toBeGreaterThanOrEqual(4)
     expect(north.length).toBeLessThanOrEqual(8)
-    // ranked: the first arch is the liveliest real channel
-    expect(north[0]!.channel).toBe('#general')
-    expect(north[0]!.label).toContain('#general')
+    // ranked: the first arch is the liveliest real channel other than the
+    // spawn itself (the spawn is #general, so #dev leads the arches)
+    expect(world.spawn).toBe('#general')
+    expect(north[0]!.channel).toBe('#dev')
+    expect(north[0]!.label).toContain('#dev')
     expect(north[0]!.label).toContain('5') // live population in the label
   })
 
@@ -192,5 +195,40 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
     const world = worldFromChannels([])
     expect(world.rooms.length).toBe(1) // a lone plaza so there is somewhere to stand
     expect(world.spawn).toBe('#lobby')
+  })
+
+  // Regression: on irc.freeq.at the home channel #freeq is private (absent from
+  // LIST, nobody in it). A flat home bonus handed it the spawn, so every single
+  // visitor was dropped alone into a policy-gated room. You must never spawn
+  // somewhere empty.
+  it('never spawns into the home channel when it is hidden and empty', () => {
+    const world = worldFromChannels(
+      [
+        { name: '#general', topic: 'General discussion', count: 8 },
+        { name: '#lobby', topic: 'Nothing happens here', count: 7 },
+      ],
+      { home: 'freeq' },
+    )
+    expect(world.spawn).toBe('#general')
+    // it still belongs in the world (there's a door to it), just not the spawn
+    expect(world.directory.some((d) => d.channel === '#freeq')).toBe(true)
+  })
+
+  it('still spawns in the home channel when it is public and lively', () => {
+    const world = worldFromChannels(
+      [
+        { name: '#freeq', topic: 'the home channel', count: 9 },
+        { name: '#general', topic: 'General discussion', count: 8 },
+      ],
+      { home: 'freeq' },
+    )
+    expect(world.spawn).toBe('#freeq')
+  })
+
+  it("never spawns into a user's personal channel just because LIST hides it", () => {
+    const world = worldFromChannels([{ name: '#general', topic: 'General discussion', count: 8 }], {
+      extraChannels: ['#my-private-notes'],
+    })
+    expect(world.spawn).toBe('#general')
   })
 })

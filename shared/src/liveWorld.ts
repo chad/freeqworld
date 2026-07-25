@@ -74,11 +74,16 @@ function templateFor(name: string, topic: string): RoomTemplate {
 /** Liveliness rank: population first, then having a real topic, then brevity.
  *  Conventional gathering-place names — and the server's own home channel —
  *  get a bonus so the spawn lands where the people are. */
-function rank(c: ChannelEntry, home?: string): number {
+function rank(c: ChannelEntry, home?: string, hidden?: Set<string>): number {
   const gathering = /^#(general|lobby|welcome|plaza|main)$/.test(c.name) ? 200 : 0
-  // the server's own channel is where its conversation lives — spawn there
-  // when the user can see it, unless some other channel is far busier
-  const homeBonus = home && c.name === `#${home}` ? 1200 : 0
+  // The server's own channel is where its conversation lives — but only spawn
+  // there if it is genuinely somewhere you can ARRIVE: public, and with people
+  // in it. On irc.freeq.at, #freeq is private and empty (it isn't even in
+  // LIST), and a flat bonus used to hand it the spawn, so every visitor landed
+  // alone in a policy-gated room. A newcomer must never spawn into an empty
+  // room. Kept as a strong tiebreaker, not an override.
+  const homeVisible = c.count > 0 && !hidden?.has(c.name)
+  const homeBonus = home && c.name === `#${home}` && homeVisible ? 1200 : 0
   return c.count * 100 + gathering + homeBonus + (c.topic ? 40 : 0) - Math.min(30, c.name.length)
 }
 
@@ -117,7 +122,11 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
   if (channels.length === 0) {
     channels.push({ name: '#lobby', topic: '', count: 0 })
   }
-  const sorted = [...channels].sort((a, b) => rank(b, opts.home) - rank(a, opts.home) || a.name.localeCompare(b.name))
+  // `unlisted` + `personal` are channels LIST didn't advertise — never spawn there
+  const hiddenFromList = new Set([...unlisted, ...personal])
+  const sorted = [...channels].sort(
+    (a, b) => rank(b, opts.home, hiddenFromList) - rank(a, opts.home, hiddenFromList) || a.name.localeCompare(b.name),
+  )
   const spawn = sorted[0]!.name
 
   // districts: same-template channels form east/west rings
