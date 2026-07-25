@@ -989,6 +989,8 @@ export class App {
     const body = el('obj-body')
     if (o.id === 'questboard') {
       this.renderQuestBoard(body)
+    } else if (o.id === 'lectern') {
+      this.renderLectern(body)
     } else if (o.id === 'directory' && this.town?.directory?.length) {
       this.renderDirectory(body)
     } else {
@@ -999,7 +1001,13 @@ export class App {
         'key-panel': 'Vault key status is client-side only. The server relays AES-GCM envelopes it cannot open — check the raw log and see for yourself.',
         kiosk: 'Rooms: ' + [...this.rooms.values()].map((r) => `${r.name} (${r.channel})`).join(' · '),
       }
-      body.textContent = bodies[o.id] ?? `A ${o.type}. Interactions: ${o.capabilities.join(', ')}.`
+      // Anything without bespoke behaviour still shows something TRUE about the
+      // room rather than reciting its own capability list back at you.
+      if (bodies[o.id]) body.textContent = bodies[o.id]!
+      else {
+        body.innerHTML = `<div style="color:var(--dim);margin-bottom:6px">Scenery — this fixture has no mechanics of its own yet. What's real about this room:</div>`
+        this.renderLectern(body, true)
+      }
     }
     el('objcard').classList.remove('hidden')
   }
@@ -1064,6 +1072,41 @@ export class App {
         this.conn?.join(b.dataset.go!)
       })
     }
+  }
+
+  /** The room's memory, read out of real CHATHISTORY the client already holds.
+   *  Nothing here is invented: counts, voices and spans come from signed events. */
+  private renderLectern(body: HTMLElement, append = false): void {
+    const msgs = this.log.filter((d) => d.kind === 'message').map((d) => d.event)
+    const voices = new Map<string, number>()
+    for (const m of msgs) voices.set(m.sender_name, (voices.get(m.sender_name) ?? 0) + 1)
+    const top = [...voices.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3)
+    const oldest = msgs[0]
+    const ago = (ts: number) => {
+      const h = (Date.now() - ts) / 3600000
+      if (h < 1) return `${Math.max(1, Math.round(h * 60))}m ago`
+      if (h < 48) return `${Math.round(h)}h ago`
+      return `${Math.round(h / 24)}d ago`
+    }
+    const room = this.rooms.get(this.channel)
+    const rows = [
+      `<div><b style="color:var(--cyan)">${escapeHtml(this.channel)}</b> — ${escapeHtml(room?.topic ?? 'no topic set')}</div>`,
+      `<div style="margin-top:6px">📜 <b>${msgs.length}</b> messages in memory${oldest ? `, oldest ${ago(oldest.ts)}` : ''}</div>`,
+      `<div>👥 <b>${this.members.size}</b> here now · 🔥 <b>${this.threadPlaces.length}</b> live threads · 🖼 <b>${this.galleryWall.length}</b> on the wall</div>`,
+    ]
+    if (top.length) {
+      rows.push(
+        `<div style="margin-top:6px">Most heard here: ${top
+          .map(([n, c]) => `<span style="color:var(--amber)">${escapeHtml(n)}</span> (${c})`)
+          .join(' · ')}</div>`,
+      )
+    }
+    if (room?.encrypted) rows.push('<div style="margin-top:6px">🔐 payloads here are end-to-end encrypted — the server relays ciphertext it cannot open.</div>')
+    rows.push(
+      `<div style="color:var(--dim);font-size:.78rem;margin-top:8px">Read from this channel's real history. Ask <span style="color:var(--amber)">@archivist</span> in chat to search it.</div>`,
+    )
+    if (append) body.innerHTML += rows.join('')
+    else body.innerHTML = rows.join('')
   }
 
   private renderDirectory(body: HTMLElement): void {

@@ -200,6 +200,20 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
       capabilities: ['inspect', 'read', 'claim'],
       persistence: 'persistent',
     })
+    // The room's memory, made physical: everything on this lectern is read out
+    // of the channel's real CHATHISTORY, not decoration.
+    if (Math.floor(width / 2) + 7 < width - 2) {
+      objects.push({
+        schema: 'freeq.at/world/object/v1',
+        id: 'lectern',
+        type: 'lectern',
+        position: [Math.floor(width / 2) + 7, 4],
+        sprite: 'lectern',
+        label: "Archivist's lectern",
+        capabilities: ['inspect', 'read'],
+        persistence: 'persistent',
+      })
+    }
     return {
       schema: 'freeq.at/world/room/v1',
       channel: c.name,
