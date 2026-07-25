@@ -18,6 +18,16 @@ import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
 import { familiarFor, imageUrlsIn, threadsOf, type ThreadPlace } from './worldExtras'
+import {
+  drawContactShadow,
+  drawFloorTile,
+  drawScanlines,
+  drawVignette,
+  drawWallShadow,
+  drawWallTile,
+  DustField,
+  LightMap,
+} from './gfx'
 
 const TILE_PX = 8
 const VIEW_W = 320
@@ -48,14 +58,27 @@ interface Emote {
   until: number
 }
 
+/** How dark a room is before its lights — the dungeon-crawler dial. */
+const AMBIENT: Record<string, number> = {
+  plaza: 0.26,
+  workshop: 0.34,
+  laboratory: 0.34,
+  club: 0.44,
+  library: 0.36,
+  vault: 0.5,
+  'train car': 0.3,
+  lounge: 0.3,
+}
+
 const TEMPLATE_PALETTES: Record<string, { floor: string; wall: string; rug: string; decor: string; glow: string }> = {
-  plaza: { floor: '#262635', wall: '#45455e', rug: '#33334a', decor: '#6b6b8a', glow: '#ffd166' },
-  workshop: { floor: '#2b2318', wall: '#54422a', rug: '#3a2f1f', decor: '#8a6a3a', glow: '#ffb454' },
-  laboratory: { floor: '#16262a', wall: '#2e4d55', rug: '#1e3439', decor: '#4a7d8a', glow: '#56c9d6' },
-  club: { floor: '#1c1224', wall: '#3a2454', rug: '#2a1a3a', decor: '#5a3a80', glow: '#e055c0' },
-  library: { floor: '#241c14', wall: '#4a3a24', rug: '#332a1a', decor: '#7a5c33', glow: '#e8d9a0' },
-  vault: { floor: '#101622', wall: '#2a3a5e', rug: '#182238', decor: '#3a4d75', glow: '#56c9d6' },
-  'train car': { floor: '#1e242a', wall: '#3e4c58', rug: '#2a323a', decor: '#5c7080', glow: '#67c26b' },
+  plaza: { floor: '#3b3b57', wall: '#5c5c85', rug: '#4a3f6b', decor: '#8b86b8', glow: '#ffd166' },
+  workshop: { floor: '#3d3220', wall: '#6b5334', rug: '#52412a', decor: '#a8813f', glow: '#ffb454' },
+  laboratory: { floor: '#1e3840', wall: '#356b78', rug: '#29505a', decor: '#5fa3b5', glow: '#56c9d6' },
+  club: { floor: '#2a1936', wall: '#543471', rug: '#3d2452', decor: '#8b57bd', glow: '#e055c0' },
+  library: { floor: '#33281b', wall: '#63502f', rug: '#47381f', decor: '#a37c42', glow: '#e8d9a0' },
+  vault: { floor: '#172033', wall: '#37507f', rug: '#22304d', decor: '#52709e', glow: '#56c9d6' },
+  'train car': { floor: '#2a323b', wall: '#55697a', rug: '#38434f', decor: '#7d94a8', glow: '#67c26b' },
+  lounge: { floor: '#33253a', wall: '#614a6b', rug: '#443050', decor: '#9a7bb0', glow: '#ff9ec7' },
 }
 
 function el<T extends HTMLElement>(id: string): T {
@@ -112,6 +135,10 @@ export class App {
   private lastEnsemble = 0
   private canvas = el<HTMLCanvasElement>('world')
   private ctx = this.canvas.getContext('2d')!
+  private lightMap = new LightMap(VIEW_W, VIEW_H)
+  private dust = new DustField(VIEW_W, VIEW_H)
+  /** lights collected during the tile pass, composited after the entity pass */
+  private frameLights: { x: number; y: number; r: number; c: string; p: number }[] = []
   private spriteSets = new Map<string, SpriteSet>()
 
   start(): void {
@@ -1312,32 +1339,29 @@ export class App {
     const x1 = Math.min(this.map.width, x0 + VIEW_W / TILE_PX + 2)
     const y1 = Math.min(this.map.height, y0 + VIEW_H / TILE_PX + 2)
     const tileAt = (x: number, y: number) => (x < 0 || y < 0 || x >= this.map!.width || y >= this.map!.height ? TILE.WALL : this.map!.tiles[y * this.map!.width + x]!)
+    this.frameLights = []
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const t = tileAt(x, y)
         const sx = x * TILE_PX - cam.x
         const sy = y * TILE_PX - cam.y
         if (t === TILE.WALL) {
-          // walls get a lit south face where they meet the floor
-          const faceBelow = tileAt(x, y + 1) !== TILE.WALL
-          ctx.fillStyle = shade(pal.wall, faceBelow ? 1.35 : 0.75)
-          ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
-          if (faceBelow) {
-            ctx.fillStyle = shade(pal.wall, 0.5)
-            ctx.fillRect(sx, sy, TILE_PX, 2)
-          }
+          // 3/4 view: a wall meeting open floor shows a lit brick face
+          drawWallTile(ctx, sx, sy, TILE_PX, pal.wall, x, y, tileAt(x, y + 1) !== TILE.WALL)
           continue
         }
-        ctx.fillStyle = t === TILE.RUG ? pal.rug : t === TILE.GLOW ? shade(pal.glow, 0.35) : t === TILE.DOOR ? '#0c0c14' : t === TILE.DECOR ? pal.floor : pal.floor
-        ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
-        if (t === TILE.FLOOR && (x + y) % 2 === 0) {
-          ctx.fillStyle = 'rgba(255,255,255,0.025)'
-          ctx.fillRect(sx, sy, TILE_PX, TILE_PX)
-        }
+        const base = t === TILE.RUG ? pal.rug : t === TILE.GLOW ? shade(pal.glow, 0.28) : t === TILE.DOOR ? '#0c0c14' : pal.floor
+        drawFloorTile(ctx, sx, sy, TILE_PX, base, x, y)
+        // walls cast onto the floor beneath them
+        if (tileAt(x, y - 1) === TILE.WALL) drawWallShadow(ctx, sx, sy, TILE_PX)
         if (t === TILE.GLOW) {
           ctx.fillStyle = pal.glow
           ctx.fillRect(sx + 2, sy + 2, 4, 4)
+          ctx.fillStyle = 'rgba(255,255,255,0.5)'
+          ctx.fillRect(sx + 3, sy + 3, 2, 2)
+          this.frameLights.push({ x: sx + 4, y: sy + 4, r: 34, c: pal.glow, p: 0.95 })
         }
+        if (t === TILE.DOOR) this.frameLights.push({ x: sx + 4, y: sy + 4, r: 18, c: pal.glow, p: 0.45 })
         if (t === TILE.DECOR) {
           // incidental furniture: crate/plant block with outline
           ctx.fillStyle = shade(pal.decor, 0.55)
@@ -1546,6 +1570,29 @@ export class App {
       ctx.fillText(e.emoji, target.x * TILE_PX - cam.x - 4, (target.y - 3) * TILE_PX - cam.y - age * 8)
     }
 
+    // ---- lighting: torch-lit darkness over the whole scene ----
+    const now = performance.now()
+    const ambient = AMBIENT[room.template] ?? 0.58
+    this.lightMap.begin(ambient)
+    for (const l of this.frameLights) this.lightMap.add(l.x, l.y, l.r, l.c, l.p)
+    // campfire threads flicker
+    for (const tp of this.threadPlaces) {
+      const flick = 0.82 + Math.sin(now / 90 + tp.x * 3) * 0.1 + Math.sin(now / 37 + tp.y) * 0.06
+      this.lightMap.add(tp.x * TILE_PX - cam.x, tp.y * TILE_PX - cam.y, 30, '#ff9a3c', flick)
+    }
+    // every soul carries a little light; yours is the torch
+    for (const r of this.remotes.values()) {
+      this.lightMap.add(r.x * TILE_PX - cam.x, r.y * TILE_PX - cam.y - 6, 34, '#ffd9a0', 0.55)
+    }
+    if (this.identity) {
+      const bob = 0.94 + Math.sin(now / 260) * 0.06
+      this.lightMap.add(this.me.x * TILE_PX - cam.x, this.me.y * TILE_PX - cam.y - 6, 92, '#ffc987', bob)
+    }
+    this.lightMap.composite(ctx)
+
+    // dust motes drifting through the light
+    this.dust.draw(ctx, Math.min(0.05, (now - this.lastFrameTime) / 1000 || 0.016))
+
     // time of day breathes through the palette (local clock, subtle)
     const hour = new Date().getHours() + new Date().getMinutes() / 60
     let tint: string | null = null
@@ -1556,6 +1603,10 @@ export class App {
       ctx.fillStyle = tint
       ctx.fillRect(0, 0, VIEW_W, VIEW_H)
     }
+
+    // CRT finish: corner falloff + scanlines, kept light enough to read 7px text
+    drawVignette(ctx, VIEW_W, VIEW_H, 0.36)
+    drawScanlines(ctx, VIEW_W, VIEW_H, 0.05)
   }
 
   private parkedLayout = new Map<string, { x: number; y: number }>()
@@ -1634,11 +1685,9 @@ export class App {
       const js = this.remoteJumps.get(d.did)
       if (js !== undefined && nowJ - js < 550) jumpOff = Math.sin(((nowJ - js) / 550) * Math.PI) * 7
     }
-    if (jumpOff > 0.5) {
-      // grounded shadow while airborne
-      ctx.fillStyle = 'rgba(0,0,0,0.35)'
-      ctx.fillRect(Math.round(sx - 4), Math.round(d.y * TILE_PX - cam.y + 2), 8, 2)
-    }
+    // contact shadow: always grounded, and it stays put (shrinking) mid-jump
+    const groundY = Math.round(d.y * TILE_PX - cam.y + 2)
+    drawContactShadow(ctx, Math.round(sx), groundY, jumpOff > 0.5 ? 3.5 : 5, jumpOff > 0.5 ? 0.24 : 0.34)
     const sy = d.y * TILE_PX - cam.y + idleBob - jumpOff
     const frame = d.moving ? (Math.floor(this.walkPhase) % 2 === 0 ? 1 : 2) : 0
     if (set) {
