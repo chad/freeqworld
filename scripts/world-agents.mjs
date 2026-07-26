@@ -342,8 +342,15 @@ for (const [i, agent] of AGENTS.entries()) {
             attestCompletionForDid(player, 'face', CHANNELS[0], false)
             client.sendMessage(nick, `verified, ${nick} — your avatar is the exact bytes your DID derives (${res.variant}). nobody had to take your word for it: the blob is addressed by its own hash, in a record signed by your repo.`)
           } else {
-            console.log(`[${agent.nick}] face not worn by ${player.slice(0, 24)}… (avatar ${String(res.actual).slice(0, 16)}…)`)
-            client.sendMessage(nick, `not yet, ${nick} — your avatar isn't the portrait your DID derives. set it at https://pfp.freeq.at and ask me again; i compare the hash of the bytes, so it has to be the real thing.`)
+            const want = res.expected[0]
+            console.log(
+              `[${agent.nick}] face not worn by ${player.slice(0, 24)}…: has ${String(res.actual).slice(0, 20)}…` +
+              ` (${res.actualSize ?? '?'}B), wants ${want ? `${want.cid.slice(0, 20)}… (${want.size}B)` : 'unknown'}`,
+            )
+            const detail = res.actual
+              ? `you're wearing ${res.actualSize ? `${Math.round(res.actualSize / 1024)}kB` : 'an image'} whose hash is ${String(res.actual).slice(0, 18)}…, and the portrait your DID derives is ${want ? `${Math.round(want.size / 1024)}kB, ${want.cid.slice(0, 18)}…` : 'a different image'}.`
+              : `you don't have an avatar set at all.`
+            client.sendMessage(nick, `not yet, ${nick} — ${detail} if you set it before today, set it again at https://pfp.freeq.at: the app now uploads the exact bytes i hash, and an image the browser encoded can never match. i read this from your own PDS, so it's current.`)
           }
         } catch (e) {
           console.log(`[${agent.nick}] face check failed:`, String(e).slice(0, 120))
@@ -611,18 +618,27 @@ for (const [i, agent] of AGENTS.entries()) {
       if (!r.ok) continue
       const bytes = Buffer.from(await r.arrayBuffer())
       // hash it ourselves rather than believing the x-freeq-cid header
-      expected.push({ variant, cid: rawCidOf(bytes) })
+      expected.push({ variant, cid: rawCidOf(bytes), size: bytes.length })
     }
+    // read the profile record from the PDS THEY chose, not from an aggregator:
+    // it is the authoritative copy, and it cannot be stale seconds after they
+    // change their avatar
+    let host = APPVIEW_HTTP
+    try {
+      host = `${await resolvePdsFor(playerDid)}/xrpc`
+    } catch { /* fall back to the AppView rather than failing the check */ }
     const rec = await fetch(
-      `${APPVIEW_HTTP}/com.atproto.repo.getRecord?repo=${encodeURIComponent(playerDid)}` +
+      `${host}/com.atproto.repo.getRecord?repo=${encodeURIComponent(playerDid)}` +
       `&collection=app.bsky.actor.profile&rkey=self`,
     )
-    if (!rec.ok) return { ok: false, reason: 'no-profile', expected }
+    if (!rec.ok) return { ok: false, reason: 'no-profile', expected, host }
     const body = await rec.json()
-    const actual = body?.value?.avatar?.ref?.$link ?? null
+    const avatar = body?.value?.avatar
+    const actual = avatar?.ref?.$link ?? null
     const hit = expected.find((e) => e.cid === actual)
-    return { ok: Boolean(hit), variant: hit?.variant, actual, expected }
+    return { ok: Boolean(hit), variant: hit?.variant, actual, actualSize: avatar?.size ?? null, expected, host }
   }
+
 
   // ── Referrals ─────────────────────────────────────────────────────────────
   //

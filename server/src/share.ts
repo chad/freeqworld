@@ -239,6 +239,10 @@ export interface FaceCheck {
   expected: Record<FaceVariant, string>
   /** which variant they are wearing, or null */
   wearing: FaceVariant | null
+  /** bytes of what they are actually wearing, for diagnosing a mismatch */
+  avatar_size: number | null
+  /** where the record was read from */
+  source: string
   /** how to reproduce this result yourself */
   proof: string
 }
@@ -246,18 +250,31 @@ export interface FaceCheck {
 /** Is this identity wearing the face its DID derives? */
 export async function checkFace(id: Identity): Promise<FaceCheck> {
   let avatarCid: string | null = null
+  let avatarSize: number | null = null
+  let source = APPVIEW
   try {
+    // the PDS they chose is authoritative and never lags behind a change they
+    // just made; the AppView is only a fallback
+    try {
+      const doc = (await (await fetch(`https://plc.directory/${encodeURIComponent(id.did)}`,
+        { signal: AbortSignal.timeout(5000) })).json()) as { service?: { id?: string; serviceEndpoint?: string }[] }
+      const ep = doc.service?.find((x) => x.id?.endsWith('#atproto_pds'))?.serviceEndpoint
+      if (ep) source = `${String(ep).replace(/\/$/, '')}/xrpc`
+    } catch {
+      /* keep the AppView */
+    }
     const r = await fetch(
-      `${APPVIEW}/com.atproto.repo.getRecord?repo=${encodeURIComponent(id.did)}` +
+      `${source}/com.atproto.repo.getRecord?repo=${encodeURIComponent(id.did)}` +
         `&collection=app.bsky.actor.profile&rkey=self`,
       { signal: AbortSignal.timeout(6000) },
     )
     if (r.ok) {
-      const body = (await r.json()) as { value?: { avatar?: { ref?: { $link?: string } } } }
+      const body = (await r.json()) as { value?: { avatar?: { ref?: { $link?: string }; size?: number } } }
       avatarCid = body.value?.avatar?.ref?.$link ?? null
+      avatarSize = body.value?.avatar?.size ?? null
     }
   } catch {
-    /* unreachable PDS: report unknown rather than guessing */
+    /* unreachable: report unknown rather than guessing */
   }
   const variants: FaceVariant[] = ['explorer', 'portrait']
   const expected = {} as Record<FaceVariant, string>
@@ -267,6 +284,8 @@ export async function checkFace(id: Identity): Promise<FaceCheck> {
     did: id.did,
     handle: id.handle,
     avatar_cid: avatarCid,
+    avatar_size: avatarSize,
+    source,
     expected,
     wearing,
     proof:
