@@ -46,6 +46,9 @@ async function ensureFreshBuild(): Promise<void> {
 }
 void ensureFreshBuild()
 
+// build stamp — check with `__build` in the console, or open Dev mode
+;(window as unknown as Record<string, unknown>).__build = __BUILD__
+
 const app = new App()
 app.start()
 // e2e test hook — exposes teleport/join/state helpers

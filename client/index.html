@@ -13,6 +13,24 @@
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:image" content="https://world.freeq.at/og.png" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>👾</text></svg>" />
+  <script>
+    // Stale-cache rescue. This MUST be inline: if the browser cached this page
+    // and the hashed bundle it names was deleted by a later deploy, the module
+    // 404s and nothing from the bundle can ever run to fix it — the world just
+    // comes up blank. Catch the failed script load and reload once through a
+    // cache-busting URL. sessionStorage-guarded so it can never loop.
+    (function () {
+      try {
+        window.addEventListener('error', function (e) {
+          var t = e.target
+          if (!t || t.tagName !== 'SCRIPT') return
+          if (sessionStorage.getItem('fw-refreshed')) return
+          sessionStorage.setItem('fw-refreshed', '1')
+          location.replace(location.pathname + '?r=' + Date.now() + location.hash)
+        }, true)
+      } catch (_) {}
+    })()
+  </script>
   <style>
     :root {
       --bg: #0d0d14;

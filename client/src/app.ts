@@ -767,6 +767,7 @@ export class App {
       `server: ${this.conn?.serverUrl ?? '—'} (${this.town?.server ?? '?'})`,
       `transport: WebSocket/TLS · rtt≈${this.rtt.toFixed(0)}ms`,
       `channel: ${this.channel} · durable history + ephemeral TAGMSG presence split`,
+      `build: ${(window as unknown as { __build?: string }).__build ?? 'dev'}`,
     ]
     if (this.backendKind() === 'town') {
       lines.push(`raw storage: <a href="${this.conn?.serverUrl}/api/debug/log/${encodeURIComponent(this.channel)}" target="_blank">/api/debug/log/${this.channel}</a>`)
