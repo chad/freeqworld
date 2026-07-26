@@ -1,0 +1,80 @@
+{
+  "description": "Worked signing examples for freeq.at/act (RFC v0.4). Every implementation must reproduce canonical, kid, and sigTag byte-for-byte from tags + seed. Non-act tags in `tags` are present deliberately: they must NOT be covered.",
+  "kidRule": "base64url-nopad(sha256(raw 32-byte ed25519 public key)[0..16])",
+  "sigTagFormat": "ed25519:<kid>:<base64url-nopad signature over the UTF-8 canonical bytes>",
+  "vectors": [
+    {
+      "canonical": "{\"act\":\"handoff\",\"act-caps\":\"freeq.at/web-search\",\"act-ctx-h\":\"sha256:9f00\",\"act-deadline\":\"1788000000\",\"act-from\":\"did:plc:eliza\",\"act-id\":\"01JABCDEF000000000000000EF\",\"act-title\":\"Cite 3 sources on X\",\"act-to\":\"did:plc:scholar\",\"act-verb\":\"offer\"}",
+      "kid": "NHUPmL1Z_PyUbaRaqr6TOw",
+      "name": "directed-offer",
+      "publicKey": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+      "seed": "0101010101010101010101010101010101010101010101010101010101010101",
+      "sigTag": "ed25519:NHUPmL1Z_PyUbaRaqr6TOw:59iWBI1W00_xg_S2wUT94pFZ0ZnkxHEAmz62SQ6U-1n0mYZV4dbHMmxLqA_sPCgw4B1bG-AxR-J1TSGHF9XgDA",
+      "tags": {
+        "+freeq.at/act": "handoff",
+        "+freeq.at/act-caps": "freeq.at/web-search",
+        "+freeq.at/act-ctx-h": "sha256:9f00",
+        "+freeq.at/act-deadline": "1788000000",
+        "+freeq.at/act-from": "did:plc:eliza",
+        "+freeq.at/act-id": "01JABCDEF000000000000000EF",
+        "+freeq.at/act-title": "Cite 3 sources on X",
+        "+freeq.at/act-to": "did:plc:scholar",
+        "+freeq.at/act-verb": "offer",
+        "+freeq.at/actor-class": "agent",
+        "+freeq.at/sig": "ed25519:notcovered:notcovered",
+        "msgid": "01JSERVERMINTED0000000000"
+      }
+    },
+    {
+      "canonical": "{\"act\":\"handoff\",\"act-caps\":\"freeq.at/log-analysis\",\"act-ctx-h\":\"sha256:2c00\",\"act-from\":\"did:plc:eliza\",\"act-id\":\"01JXYZ0000000000000000000X\",\"act-title\":\"Summarize today's S2S logs\",\"act-verb\":\"offer\"}",
+      "kid": "ajgD1fBZkCocba-8m6Rykg",
+      "name": "open-offer-no-act-to",
+      "publicKey": "gTl3Dqh9F19Wo1Rmw0x-zMuNipG07jeiXfYPW4_Js5Q",
+      "seed": "0202020202020202020202020202020202020202020202020202020202020202",
+      "sigTag": "ed25519:ajgD1fBZkCocba-8m6Rykg:WU1zAztgi50DEuMgTGcO9HsUdw8s02h4bqrNi31OQ_U22iEF1azvMhRhXQ5Wz1PW4QpGkAMBuxMKwnynh99tCg",
+      "tags": {
+        "+freeq.at/act": "handoff",
+        "+freeq.at/act-caps": "freeq.at/log-analysis",
+        "+freeq.at/act-ctx-h": "sha256:2c00",
+        "+freeq.at/act-from": "did:plc:eliza",
+        "+freeq.at/act-id": "01JXYZ0000000000000000000X",
+        "+freeq.at/act-title": "Summarize today's S2S logs",
+        "+freeq.at/act-verb": "offer"
+      }
+    },
+    {
+      "canonical": "{\"act\":\"approval\",\"act-ctx-h\":\"sha256:1a00\",\"act-from\":\"did:plc:factory\",\"act-id\":\"01KDEF0000000000000000000K\",\"act-scope\":\"deploy:factory-bot\",\"act-title\":\"Deploy factory-bot v12\",\"act-to\":\"did:plc:opslead\",\"act-verb\":\"request\"}",
+      "kid": "ti6Gf6LzOv5i1daxZC4WIQ",
+      "name": "approval-with-kind-specific-field",
+      "publicKey": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY_k2NsFGFKyHN9E",
+      "seed": "0303030303030303030303030303030303030303030303030303030303030303",
+      "sigTag": "ed25519:ti6Gf6LzOv5i1daxZC4WIQ:73P-6cLM6zzgwEgpSqKN-fQs5vLaeUoeOQEwgi6aDAJtr5IiaMBgI_JDTBodCyjo-wsqhKuAxiVTmq3vdMLpBg",
+      "tags": {
+        "+freeq.at/act": "approval",
+        "+freeq.at/act-ctx-h": "sha256:1a00",
+        "+freeq.at/act-from": "did:plc:factory",
+        "+freeq.at/act-id": "01KDEF0000000000000000000K",
+        "+freeq.at/act-scope": "deploy:factory-bot",
+        "+freeq.at/act-title": "Deploy factory-bot v12",
+        "+freeq.at/act-to": "did:plc:opslead",
+        "+freeq.at/act-verb": "request"
+      }
+    },
+    {
+      "canonical": "{\"act\":\"handoff\",\"act-from\":\"did:plc:scholar\",\"act-id\":\"01JABCDEF000000000000000EF\",\"act-note\":\"ok — \\\"on it\\\" ✓\\n(eta 5m)\",\"act-ref\":\"01JOFFERMSGID000000000000\",\"act-verb\":\"accept\"}",
+      "kid": "xblA7T9lw5GWXegpX8XSXw",
+      "name": "accept-minimal-with-escaping",
+      "publicKey": "ypOsFwUYcHHWe4PH_w7-gQjo7EUwV113JoeTM9vavnw",
+      "seed": "0404040404040404040404040404040404040404040404040404040404040404",
+      "sigTag": "ed25519:xblA7T9lw5GWXegpX8XSXw:mabnZhQwhefhugV-LLgArjsxNi--HU-s1kD9l_9vk4UTo5LMn6JV3juInEVwmldHXk-GOghHZ5TJWisY-deiDw",
+      "tags": {
+        "+freeq.at/act": "handoff",
+        "+freeq.at/act-from": "did:plc:scholar",
+        "+freeq.at/act-id": "01JABCDEF000000000000000EF",
+        "+freeq.at/act-note": "ok — \"on it\" ✓\n(eta 5m)",
+        "+freeq.at/act-ref": "01JOFFERMSGID000000000000",
+        "+freeq.at/act-verb": "accept"
+      }
+    }
+  ]
+}
