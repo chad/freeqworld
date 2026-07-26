@@ -11,6 +11,7 @@
 
 import { FreeqClient } from '@freeq/sdk'
 import { actTags, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
+import { deliveryOutcome, existingEnvelope } from './quest.mjs'
 import nacl from 'tweetnacl'
 import { hkdfSync, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -183,17 +184,21 @@ for (const [i, agent] of AGENTS.entries()) {
   }
 
   const issueQuest = (nick, viaDm = false, kind = 'courier') => {
-    // idempotent: a pending quest is re-sent, never replaced — DM replays on
-    // reconnect (or an impatient courier) must not invalidate the envelope
+    // quieter rooms pay double — couriers carry life where there is none
+    const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
+    const quietest = ranked[0] ?? CHANNELS[0]
+    // Idempotent: a pending run is re-sent, never replaced — DM replays on
+    // reconnect (or an impatient courier) must not invalidate the envelope.
+    // That now includes a run sealed for them under a DIFFERENT nick: a player
+    // whose nick changed between sessions was getting a second phrase for the
+    // same room and could only ever confirm one of them.
     const existing = quests.get(nick.toLowerCase())
+      ?? (kind === 'courier' ? existingEnvelope(quests, nick, quietest)?.quest : null)
     if (existing) {
       const reminder = `your envelope is still sealed, ${nick}. ${questBrief(nick, existing)}`
       if (!viaDm) client.sendMessage(nick, reminder)
       return reminder
     }
-    // quieter rooms pay double — couriers carry life where there is none
-    const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
-    const quietest = ranked[0] ?? CHANNELS[0]
     let q
     if (kind === 'survey') {
       // only ask about rooms whose topic we can actually check
@@ -305,37 +310,57 @@ for (const [i, agent] of AGENTS.entries()) {
       return
     }
 
-    // quest completion: the right courier says the right phrase in the right room
+    // quest completion. The courier decision lives in scripts/quest.mjs so it can
+    // be tested off the wire (shared/src/quest.test.ts) — it was silently wrong
+    // for anyone whose nick changed between sessions.
     const quest = quests.get(msg.from.toLowerCase())
-    const isCourierDelivery = quest?.kind !== 'rekindle' && quest?.phrase && ch === quest.target && msg.text.toUpperCase().includes(quest.phrase.toUpperCase())
+    const delivery = deliveryOutcome({ ledger: quests, from: msg.from, channel: ch, text: msg.text })
     // a rekindle is witnessed, not spoken: any real sentence in the quiet room
     const isRekindle = quest?.kind === 'rekindle' && ch === quest.target && msg.text.trim().length >= 12
-    if (quest && (isCourierDelivery || isRekindle)) {
-      quests.delete(msg.from.toLowerCase())
+    if (delivery.kind === 'complete' || isRekindle) {
+      const done = isRekindle ? quest : delivery.quest
+      quests.delete(isRekindle ? msg.from.toLowerCase() : delivery.key)
+      // retire the envelope from their other session too, or it will confuse
+      // them again the next time they say it
+      if (delivery.kind === 'complete' && delivery.stale) quests.delete(delivery.stale.key)
       saveQuests()
-      console.log(`[${agent.nick}] quest complete (${quest.kind}): ${msg.from} in ${ch}`)
-      const stars = quest.bonus ? '⭐⭐' : '⭐'
+      console.log(
+        `[${agent.nick}] quest complete (${done.kind}): ${msg.from} in ${ch}` +
+          (delivery.viaStale ? ` (carried ${delivery.stale.quest.phrase}, sealed for ${delivery.stale.key})` : ''),
+      )
+      const stars = done.bonus ? '⭐⭐' : '⭐'
       setTimeout(() => {
         client.sendMessage(
           ch,
           isRekindle
             ? `${stars} this room was silent, and ${msg.from} spoke first. rekindled — the channel bore witness.`
-            : `${stars} delivery confirmed — ${msg.from} carried ${quest.phrase} across the network${quest.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`,
+            : `${stars} delivery confirmed — ${msg.from} carried ${delivery.viaStale ? delivery.stale.quest.phrase : done.phrase} across the network${done.bonus ? ' into a quiet room' : ''}. the courier run is complete; the channel bore witness.`,
         )
         client.sendMessage(msg.from, `quest complete, ${msg.from}. ${stars} say "quest" whenever you want another run.`)
       }, 700)
       return
     }
-    // a sealed phrase with no matching ledger entry (wrong room, or issued
-    // before a restart in the days before the ledger persisted): own it
-    if (agent.nick === 'cartographer' && /PKT-[A-Z0-9]{4}/i.test(msg.text)) {
-      const pending = quests.get(msg.from.toLowerCase())
+    // A sealed phrase we could not confirm. This used to answer every case with
+    // "that envelope goes to <target>" — including when the courier was ALREADY
+    // STANDING IN <target> and the phrase was the thing that did not match, so
+    // it sent people back to the room they were in. Say what actually happened.
+    if (agent.nick === 'cartographer' && delivery.kind !== 'none') {
+      console.log(
+        `[${agent.nick}] delivery refused (${delivery.kind}): ${msg.from} in ${ch}` +
+          ` said ${(delivery.said ?? []).join(',') || '-'}` +
+          ` expected ${delivery.quest ? `${delivery.quest.phrase} in ${delivery.quest.target}` : 'nothing on file'}`,
+      )
       const last = lastReply.get(`lost:${msg.from}`) ?? 0
       if (Date.now() - last > 30_000) {
         lastReply.set(`lost:${msg.from}`, Date.now())
-        const hint = pending
-          ? `that envelope goes to ${pending.target}, ${msg.from} — say ${pending.phrase} there and i will confirm it.`
-          : `that envelope isn't in my ledger, ${msg.from} — my fault, not yours. say "quest" and i will cut you a fresh one.`
+        const q = delivery.quest
+        const hint = delivery.kind === 'wrong-room'
+          ? `right phrase, wrong room, ${msg.from} — that envelope goes to ${q.target}. say ${q.phrase} there and i will confirm it.`
+          : delivery.kind === 'stale-phrase'
+            ? `you're in the right room, ${msg.from}, but that isn't the seal i cut for you — yours is ${q.phrase}. say that here and it's done.`
+            : q
+              ? `that seal isn't the one in my ledger, ${msg.from} — yours is ${q.phrase} for ${q.target}.`
+              : `that envelope isn't in my ledger, ${msg.from} — my fault, not yours. say "quest" and i will cut you a fresh one.`
         setTimeout(() => client.sendMessage(ch, hint), 700)
       }
       return

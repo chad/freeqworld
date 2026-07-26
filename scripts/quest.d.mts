@@ -1,0 +1,36 @@
+// Types for the agents' plain-ESM courier bookkeeping, so the regression test
+// (shared/src/quest.test.ts) typechecks. Same arrangement as act.d.mts.
+
+export interface Quest {
+  kind: 'courier' | 'survey' | 'rekindle' | 'escort'
+  target: string
+  phrase?: string
+  bonus?: boolean
+  newcomer?: string
+  courier?: string
+}
+
+export type Ledger = Map<string, Quest>
+
+export interface Held {
+  key: string
+  quest: Quest
+}
+
+export type Outcome =
+  | { kind: 'complete'; key: string; quest: Quest; stale?: Held; viaStale?: boolean }
+  | { kind: 'wrong-room'; quest: Quest }
+  | { kind: 'stale-phrase'; quest: Quest; said: string[] }
+  | { kind: 'unknown-phrase'; quest: Quest | null; said: string[] }
+  | { kind: 'none' }
+
+export declare function courierRoot(nick: string): string
+export declare function sameCourier(a: string, b: string): boolean
+export declare function phrasesIn(text: string): string[]
+export declare function deliveryOutcome(input: {
+  ledger: Ledger
+  from: string
+  channel: string
+  text: string
+}): Outcome
+export declare function existingEnvelope(ledger: Ledger, nick: string, target: string): Held | null

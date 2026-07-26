@@ -68,8 +68,16 @@ function b64url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
+/** A nick freeq-server will accept.
+ *
+ *  The server allows "IRC + AT handles" and rejects only control chars, space,
+ *  NUL, CR, LF and , * ? ! @ # & : (connection/mod.rs). Dots are therefore
+ *  LEGAL and belong here: stripping them forced callers to truncate
+ *  `chadfowler.com` to `chadfowler`, which then collided with an existing
+ *  binding and the server handed back the derived `chadfowler-4qsyxmns`. Same
+ *  person, unrecognisable name, and a quest ledger keyed on it. */
 function ircNick(name: string): string {
-  const clean = name.replace(/[^A-Za-z0-9_\-\[\]{}^`|]/g, '').slice(0, 24)
+  const clean = name.replace(/[^A-Za-z0-9_.\-\[\]{}^`|]/g, '').slice(0, 48)
   return /^[A-Za-z]/.test(clean) ? clean : `w${clean}`
 }
 

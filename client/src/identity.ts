@@ -146,13 +146,17 @@ function attachOAuth(oauth: OAuthSession): Identity {
     stored = {
       seed_b64: toB64(seed),
       handle: oauth.handle,
-      display_name: oauth.handle.split('.')[0] ?? oauth.handle,
+      display_name: oauth.handle,
       client_instance: `web-${crypto.randomUUID().slice(0, 8)}`,
     }
   }
   stored.oauth = oauth
   stored.handle = oauth.handle
-  stored.display_name = oauth.handle.split('.')[0] ?? oauth.handle
+  // the FULL handle: asking for the first label only ('chadfowler') collides
+  // with whoever already holds that nick, and the server then binds you to a
+  // DID-derived alias ('chadfowler-4qsyxmns'). The handle is unique by
+  // construction and is what the macOS client and every other freeq client show.
+  stored.display_name = oauth.handle
   localStorage.setItem(STORE_KEY, JSON.stringify(stored))
   return hydrate(stored)
 }
