@@ -51,7 +51,24 @@ function fromB64(s: string): Uint8Array {
   return Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
 }
 
+/** Sessions signed in before the full handle was used stored the first label
+ *  only ('chadfowler'), which the server then had to rename around. Repair it on
+ *  load so a returning visitor gets their handle back without signing in again. */
+function migrateDisplayName(stored: StoredIdentity): StoredIdentity {
+  const handle = stored.oauth?.handle
+  if (handle && stored.display_name !== handle) {
+    stored.display_name = handle
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(stored))
+    } catch {
+      /* private mode: it will be right in memory for this session anyway */
+    }
+  }
+  return stored
+}
+
 function hydrate(stored: StoredIdentity): Identity {
+  migrateDisplayName(stored)
   const keypair = keypairFromSeed(fromB64(stored.seed_b64))
   const device_did = didFromPublicKey(keypair.publicKey)
   return {
