@@ -60,3 +60,17 @@ describe('synth', () => {
     expect(wav.byteLength).toBe(44 + audio.left.length * 4)
   })
 })
+
+describe('wav encoding', () => {
+  const audio = renderScore(compose({ ...getTheme('vault'), bars: 2 }), { sampleRate: SR })
+
+  it('halves the file size in mono, for shareable previews', () => {
+    const stereo = encodeWav(audio)
+    const mono = encodeWav(audio, { mono: true })
+    expect(mono.byteLength).toBe(44 + audio.left.length * 2)
+    expect(mono.byteLength).toBeLessThan(stereo.byteLength * 0.55)
+    const dv = new DataView(mono.buffer, mono.byteOffset, mono.byteLength)
+    expect(dv.getUint16(22, true)).toBe(1) // channel count in the header
+    expect(dv.getUint32(28, true)).toBe(SR * 2) // byte rate follows
+  })
+})

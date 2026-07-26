@@ -96,6 +96,20 @@
     }
     .facetraits summary::-webkit-details-marker { display:none; }
     .facetraits[open] summary { margin-bottom:8px; }
+    #shared { width:100%; display:flex; flex-direction:column; gap:8px; align-items:center; }
+    .sharebox { display:flex; gap:6px; width:100%; max-width:430px; }
+    .sharebox input {
+      flex:1; font-size:.82rem; padding:8px 10px; background:var(--panel2);
+      border:1px solid var(--border); color:var(--cyan); border-radius:8px;
+    }
+    button.tiny { padding:8px 12px; font-size:.82rem; }
+    .sharehint { color:var(--dim); font-size:.78rem; text-align:center; max-width:44ch; line-height:1.5; }
+    /* viewing somebody else's identity */
+    .viewing {
+      width:100%; background:var(--panel2); border:1px solid var(--border); border-radius:8px;
+      padding:9px 12px; font-size:.82rem; color:var(--dim); text-align:center;
+    }
+    .viewing b { color:var(--amber); font-weight:400; }
     .foot { margin-top:26px; color:var(--dim); font-size:.85rem; text-align:center; }
     .toast {
       position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
@@ -135,6 +149,9 @@
     <div class="surprise">no handle? <a href="#" id="surprise">surprise me →</a></div>
 
     <div id="result" class="hidden">
+      <div class="viewing hidden" id="viewing">
+        you're looking at <b id="viewing-who"></b> — <a href="./">see your own →</a>
+      </div>
       <div class="stage">
         <canvas id="pfp" width="512" height="512"></canvas>
         <button id="stage-play" title="play your theme">▶</button>
@@ -166,8 +183,20 @@
       </details>
       <div class="did" id="did"></div>
       <div class="actions">
-        <button id="download">download PNG</button>
-        <button class="ghost" id="setbsky">set as Bluesky avatar →</button>
+        <button id="setbsky">set as Bluesky avatar →</button>
+        <button class="ghost" id="share">⇪ share</button>
+        <button class="ghost" id="download">download PNG</button>
+      </div>
+      <div id="shared" class="hidden">
+        <div class="sharebox">
+          <input id="sharelink" readonly spellcheck="false" />
+          <button class="ghost tiny" id="sharecopy">copy</button>
+        </div>
+        <div class="sharehint">
+          Anyone who opens it hears this theme. Posts unfurl with the character,
+          the tune's key and tempo, and the first eight bars of the melody.
+          <a id="sharepost" target="_blank" rel="noopener">post it on Bluesky →</a>
+        </div>
       </div>
       <div class="note">
         Nothing here is uploaded art or a sound file — the character <em>and</em> the music are

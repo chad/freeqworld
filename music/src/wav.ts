@@ -2,10 +2,10 @@
 
 import type { Audio } from './synth.ts'
 
-export function encodeWav(audio: Audio): Uint8Array {
+export function encodeWav(audio: Audio, opts: { mono?: boolean } = {}): Uint8Array {
   const { sampleRate, left, right } = audio
   const frames = left.length
-  const channels = 2
+  const channels = opts.mono ? 1 : 2
   const bytesPerSample = 2
   const dataBytes = frames * channels * bytesPerSample
   const buf = new ArrayBuffer(44 + dataBytes)
@@ -30,6 +30,12 @@ export function encodeWav(audio: Audio): Uint8Array {
 
   let off = 44
   for (let i = 0; i < frames; i++) {
+    if (channels === 1) {
+      const v = Math.max(-1, Math.min(1, ((left[i] ?? 0) + (right[i] ?? 0)) / 2))
+      dv.setInt16(off, Math.round(v * 32767), true)
+      off += 2
+      continue
+    }
     for (const ch of [left, right]) {
       const v = Math.max(-1, Math.min(1, ch[i] ?? 0))
       dv.setInt16(off, Math.round(v * 32767), true)

@@ -9,6 +9,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
+import { cardPng, resolveIdentity, sharePage, stingerWav, themeWav } from './share.ts'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
@@ -167,6 +168,53 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   }
   if (path === '/api/agents') {
     return json(town.getAgents().map((a) => a.member))
+  }
+
+  // --- shareable identity pages -------------------------------------------
+  // /u/<handle> unfurls as that person's character + tune (a static SPA can't:
+  // crawlers don't run JS, so its OG tags can never vary per person).
+  // Reachable under /id/... on world.freeq.at and at the root on pfp.freeq.at.
+  const share = path.startsWith('/id/') ? path.slice('/id'.length) : path
+  const shareMatch = /^\/(u|card|theme|stinger)\/(.+)$/.exec(share)
+  if (shareMatch) {
+    const [, kind, rawWho] = shareMatch as unknown as [string, string, string]
+    const forwardedHost = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? 'pfp.freeq.at')
+    const proto = String(req.headers['x-forwarded-proto'] ?? (forwardedHost.startsWith('localhost') ? 'http' : 'https'))
+    const base = path.startsWith('/id/') ? `${proto}://${forwardedHost}/id` : `${proto}://${forwardedHost}`
+    try {
+      const id = await resolveIdentity(rawWho)
+      if (kind === 'u') {
+        const html = await sharePage(id, base)
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
+        res.end(html)
+        return
+      }
+      if (kind === 'card') {
+        const png = await cardPng(id)
+        res.writeHead(200, {
+          'content-type': 'image/png',
+          // crawlers refetch often; a day of CDN/browser cache is plenty and the
+          // card is a pure function of the DID anyway
+          'cache-control': 'public, max-age=86400',
+          'content-length': String(png.length),
+        })
+        res.end(png)
+        return
+      }
+      const wav = kind === 'stinger' ? await stingerWav(id) : await themeWav(id)
+      res.writeHead(200, {
+        'content-type': 'audio/wav',
+        'cache-control': 'public, max-age=86400',
+        'content-length': String(wav.byteLength),
+        'content-disposition': `inline; filename="freeqworld-${(id.handle || id.did).replace(/[^a-z0-9.]/gi, '_')}.wav"`,
+      })
+      res.end(Buffer.from(wav))
+      return
+    } catch (err) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end(`no FreeqWorld identity for that: ${(err as Error).message}`)
+      return
+    }
   }
 
   // FreeqWorld ID microapp at /id (built from pfp/, base '/id/')

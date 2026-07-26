@@ -72,9 +72,61 @@ async function generateFromHandle(): Promise<void> {
   const handle = $<HTMLInputElement>('handle').value.trim()
   if (!handle) return
   setBusy(true)
+  $('viewing').classList.add('hidden')
+  $('shared').classList.add('hidden')
   try {
     currentDid = await resolveHandle(handle)
     currentLabel = `@${handle.replace(/^@/, '')}`
+    await paint()
+  } catch (e) {
+    toast(String((e as Error).message ?? e))
+  } finally {
+    setBusy(false)
+  }
+}
+
+/** The canonical share URL for whoever is on screen. Same origin as the app, so
+ *  it works on pfp.freeq.at and at world.freeq.at/id alike. */
+function shareUrl(): string {
+  const who = currentLabel.startsWith('@') ? currentLabel.slice(1) : currentDid ?? ''
+  return new URL(`./u/${encodeURIComponent(who)}`, location.href).href
+}
+
+function openShare(): void {
+  if (!currentDid) return
+  const url = shareUrl()
+  $<HTMLInputElement>('sharelink').value = url
+  const text = currentLabel.startsWith('@')
+    ? `my FreeqWorld character — and the chiptune my DID composes ✦`
+    : `a FreeqWorld character and its chiptune, derived from a DID ✦`
+  $<HTMLAnchorElement>('sharepost').href =
+    `https://bsky.app/intent/compose?text=${encodeURIComponent(`${text}\n\n${url}`)}`
+  $('shared').classList.remove('hidden')
+  $<HTMLInputElement>('sharelink').select()
+}
+
+async function copyShareLink(): Promise<void> {
+  const input = $<HTMLInputElement>('sharelink')
+  try {
+    await navigator.clipboard.writeText(input.value)
+    $('sharecopy').textContent = 'copied'
+  } catch {
+    input.select() // clipboard blocked: at least it's selected
+    $('sharecopy').textContent = 'select + copy'
+  }
+  setTimeout(() => ($('sharecopy').textContent = 'copy'), 2000)
+}
+
+/** Someone opened a shared link: show that person, and say whose it is. */
+async function showSharedIdentity(who: string): Promise<void> {
+  setBusy(true)
+  try {
+    const isDid = who.startsWith('did:')
+    currentDid = isDid ? who : await resolveHandle(who)
+    currentLabel = isDid ? 'a shared identity' : `@${who.replace(/^@/, '')}`
+    $('viewing-who').textContent = currentLabel
+    $('viewing').classList.remove('hidden')
+    $<HTMLInputElement>('handle').value = isDid ? '' : who.replace(/^@/, '')
     await paint()
   } catch (e) {
     toast(String((e as Error).message ?? e))
@@ -170,6 +222,8 @@ function bind(): void {
     e.stopPropagation()
     void toggleTheme()
   })
+  $('share').addEventListener('click', openShare)
+  $('sharecopy').addEventListener('click', () => void copyShareLink())
   $('setbsky').addEventListener('click', openConnect)
   $('c-cancel').addEventListener('click', () => $('connect').classList.add('hidden'))
   $('c-go').addEventListener('click', () => void doConnect())
@@ -300,3 +354,8 @@ onPlayStateChange((on) => {
 // Handle a broker OAuth return on load (one-tap completion).
 const oauthReturn = consumePfpOAuthReturn()
 if (oauthReturn) void completeOAuth(oauthReturn)
+
+// ?u=<handle|did> — someone followed a shared link. The share page redirects
+// here so the visitor lands on a playable character rather than a static card.
+const shared = new URLSearchParams(location.search).get('u')
+if (!oauthReturn && shared) void showSharedIdentity(shared)
