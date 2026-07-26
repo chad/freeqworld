@@ -108,3 +108,44 @@ describe('the agent mints what the browser verifies', () => {
     expect(check.payload?.inviter).toBe(HOST)
   })
 })
+
+describe('crediting a referral (the path a live test cannot reach)', () => {
+  // Completing a referral needs a genuinely new AT Protocol account, so the
+  // decision is extracted and tested here instead of hoped about.
+  const DAY = '2026-07-26'
+  const pend = () => new Map([[GUEST, { inviter: HOST, id: 'inv-1', at: 0 }]])
+
+  it('credits the host on the newcomer\u2019s first real sentence', async () => {
+    const { referralCredit } = await import('../../scripts/quest.mjs')
+    const r = referralCredit({
+      pending: pend(), credited: new Set(), speaker: GUEST,
+      text: 'hello everyone, glad to be here', day: DAY,
+    })
+    expect(r.credit).toBe(true)
+    expect(r.inviter).toBe(HOST)
+    expect(r.key).toBe(`${HOST}|${GUEST}|${DAY}`)
+  })
+
+  it('ignores a stray keystroke', async () => {
+    const { referralCredit } = await import('../../scripts/quest.mjs')
+    expect(referralCredit({ pending: pend(), credited: new Set(), speaker: GUEST, text: 'hi', day: DAY }))
+      .toMatchObject({ credit: false, reason: 'too-short' })
+  })
+
+  it('pays exactly once', async () => {
+    const { referralCredit } = await import('../../scripts/quest.mjs')
+    const credited = new Set([`${HOST}|${GUEST}|${DAY}`])
+    expect(referralCredit({ pending: pend(), credited, speaker: GUEST, text: 'a real sentence here', day: DAY }))
+      .toMatchObject({ credit: false, reason: 'already-credited' })
+  })
+
+  it('ignores speech from anyone with no invite pending', async () => {
+    const { referralCredit } = await import('../../scripts/quest.mjs')
+    expect(referralCredit({
+      pending: pend(), credited: new Set(), speaker: 'did:plc:stranger00000000000000',
+      text: 'just passing through here', day: DAY,
+    })).toMatchObject({ credit: false, reason: 'no-pending-invite' })
+    expect(referralCredit({ pending: pend(), credited: new Set(), speaker: '', text: 'x'.repeat(20), day: DAY }))
+      .toMatchObject({ credit: false, reason: 'unknown-speaker' })
+  })
+})

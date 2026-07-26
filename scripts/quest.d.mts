@@ -46,3 +46,11 @@ export declare function invitePayload(a: { inviter: string; witness: string; id:
   k: string; inviter: string; id: string; iat: number; exp: number; witness: string
 }
 export declare function encodeInvite(payload: Record<string, unknown>, sigBytes: Uint8Array): string
+
+export declare function referralCredit(a: {
+  pending: Map<string, { inviter: string; id: string; at: number }>
+  credited: Set<string>
+  speaker: string
+  text: string
+  day: string
+}): { credit: boolean; reason?: string; inviter?: string; key?: string }

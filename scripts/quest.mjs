@@ -150,3 +150,21 @@ export function encodeInvite(payload, sigBytes) {
   const body = Buffer.from(inviteCanonical(payload)).toString('base64url')
   return `${body}.${Buffer.from(sigBytes).toString('base64url')}`
 }
+
+/**
+ * Should this line of speech complete a referral, and for whom?
+ *
+ * Extracted from the agent so the viral mechanic is testable: the credit path
+ * cannot be exercised live without a genuinely new AT Protocol account, and a
+ * silent failure here would quietly break the thing that grows the world.
+ */
+export function referralCredit({ pending, credited, speaker, text, day }) {
+  if (!speaker) return { credit: false, reason: 'unknown-speaker' }
+  const pend = pending.get(speaker)
+  if (!pend) return { credit: false, reason: 'no-pending-invite' }
+  // one real sentence, not a stray keystroke
+  if (String(text ?? '').trim().length < 12) return { credit: false, reason: 'too-short' }
+  const key = `${pend.inviter}|${speaker}|${day}`
+  if (credited.has(key)) return { credit: false, reason: 'already-credited' }
+  return { credit: true, inviter: pend.inviter, key }
+}

@@ -13,7 +13,7 @@ import { FreeqClient } from '@freeq/sdk'
 import { actTags, actKid, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
 import {
   deliveryOutcome, existingEnvelope, questCanonical, completionPayload,
-  invitePayload, inviteCanonical, encodeInvite,
+  invitePayload, inviteCanonical, encodeInvite, referralCredit,
 } from './quest.mjs'
 import nacl from 'tweetnacl'
 import { hkdfSync, randomBytes } from 'node:crypto'
@@ -334,6 +334,16 @@ for (const [i, agent] of AGENTS.entries()) {
     'already-known': 'that identity has spoken here before, so it is not a new arrival',
   }
 
+  /** Is this token one we minted? Cheap check before we say anything at all. */
+  const tokenIsOurs = (token) => {
+    try {
+      const body = JSON.parse(Buffer.from(String(token).split('.')[0], 'base64url').toString())
+      return body?.k === 'invite' && body.witness === did
+    } catch {
+      return false
+    }
+  }
+
   /** Verify one of OUR invites. We signed it, so we check it with our own key —
    *  no key resolution, no lookup, no trust in the bearer. */
   const checkInviteToken = (token, redeemer) => {
@@ -394,6 +404,9 @@ for (const [i, agent] of AGENTS.entries()) {
 
   const REFERRALS_PER_DAY = 5
   const mintInvite = (nick) => {
+    if (agent.nick !== 'cartographer') {
+      return `the cartographer keeps the invitations, ${nick} — ask there.`
+    }
     const inviter = client.getDidForNick?.(nick)
     if (!inviter) {
       try { client.whois(nick) } catch { /* not connected */ }
@@ -413,6 +426,10 @@ for (const [i, agent] of AGENTS.entries()) {
 
   /** A newcomer redeemed an invite: hold it until they speak. */
   const onInviteRedeem = (redeemerNick, token) => {
+    // Every agent sees every coordination event, but an invite is only ours to
+    // honour if we signed it. Answering somebody else's token produced a
+    // spurious "that invite wasn't signed by me" from the Archivist.
+    if (!tokenIsOurs(token)) return
     const redeemer = client.getDidForNick?.(redeemerNick)
     const check = checkInviteToken(token, redeemer)
     if (!check.ok) {
@@ -433,21 +450,19 @@ for (const [i, agent] of AGENTS.entries()) {
   /** Their first real sentence completes their host's run. */
   const creditReferralIfSpoken = (speakerNick, ch, text) => {
     const speaker = client.getDidForNick?.(speakerNick)
-    if (!speaker) return
-    const pend = pendingReferrals.get(speaker)
-    if (!pend || text.trim().length < 12) return
-    const today = new Date().toISOString().slice(0, 10)
-    const key = `${pend.inviter}|${speaker}|${today}`
-    if (creditedReferrals.has(key)) return
-    creditedReferrals.add(key)
+    const day = new Date().toISOString().slice(0, 10)
+    const decision = referralCredit({ pending: pendingReferrals, credited: creditedReferrals, speaker, text, day })
+    if (!decision.credit) return
+    creditedReferrals.add(decision.key)
     pendingReferrals.delete(speaker)
     saveInvites()
-    console.log(`[${agent.nick}] referral complete: ${pend.inviter.slice(0, 24)}… brought ${speaker.slice(0, 24)}…`)
-    attestCompletionForDid(pend.inviter, 'referral', ch, true)
+    console.log(`[${agent.nick}] referral complete: ${decision.inviter.slice(0, 24)}… brought ${speaker.slice(0, 24)}…`)
+    attestCompletionForDid(decision.inviter, 'referral', ch, true)
     setTimeout(() => {
       client.sendMessage(ch, `⭐⭐ ${speakerNick} arrived on an invite and spoke — a new identity in the world. their host's referral is complete, and the channel bore witness.`)
     }, 700)
   }
+
 
   /** A survey is completed over DM: the courier reports the topic they read. */
   const trySurvey = (nick, text) => {
