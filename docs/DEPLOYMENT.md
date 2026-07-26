@@ -239,3 +239,48 @@ nothing here to deploy for FreeqWorld changes.
 3. Anything FreeqWorld needs from freeq production (allowlists, channel
    policy, agent actor-class) is a change to *that* repo and *that* box —
    plan it as a cross-repo deploy, not a fimp push.
+
+
+## Channel debris cleanup (irc.freeq.at)
+
+The live database is `/home/chad/src/freeq/irc.db` on **tech.blueyard.com**
+(`ssh chad@tech.blueyard.com`, freeq-server under systemd, `User=chad`). The copy
+in the Hetzner box's `freeq-data` docker volume is a STALE LEFTOVER from before
+the move — do not touch it thinking it is production; its files stop at Jul 4.
+
+Procedure (done 2026-07-26: 129 → 79 channels):
+
+```sh
+# 1. evidence, read-only
+ssh chad@tech.blueyard.com 'cd /home/chad/src/freeq && sqlite3 -readonly -separator "|" irc.db "
+  select c.name,
+         (select count(*) from messages m where m.channel=c.name),
+         (select count(distinct coalesce(m.sender_did,m.sender)) from messages m where m.channel=c.name),
+         coalesce((select max(m.timestamp) from messages m where m.channel=c.name),0),
+         (select count(*) from user_channels u where u.channel=c.name)
+  from channels c order by c.name;"' > /tmp/chan-stats.txt
+node scripts/channel-audit.mjs /tmp/chan-stats.txt      # keep / spare / delete, with reasons
+# 2. stop, back up (sqlite3 .backup consolidates the WAL), delete in ONE
+#    transaction with an allowlist guard, integrity_check, restart
+```
+
+Rules learned doing it:
+
+- **`isDebris()` name patterns are not sufficient to delete.** `/\d{3,}/` matches
+  `#room101` and the suffix rule matches any `#foo-ab1c`. Deletion requires a
+  pattern match **AND** no evidence of human use. `#test` matched the patterns and
+  has 1897 messages from **161 senders** — the evidence rule is what saved it.
+- **Recency is not evidence.** An e2e run leaves one message from one sender;
+  sixty of those read as "active 6 days ago".
+- Channel-keyed tables in this schema: `channels(name)`, `user_channels`,
+  `messages`, `reactions`, `pins`, `group_keys`, `bans`, `invite_exceptions`,
+  `channel_budgets`, `user_favorites`, `coordination_events`, and
+  **`media(scope)`** — the scope column holds channel names. There is **no**
+  `messages_fts` table in this database.
+- **`#freeq` is intentionally absent from LIST** (private, policy-gated). Its
+  absence is not damage — check the DB before panicking.
+- **Empty shells come back.** Any client with a channel in its auto-join list
+  recreates the row on reconnect. After this run, 12 shells reappeared
+  (`#chadmac-*`, `#avtest`, `#scrprobe-0703`) with **0 messages** — the history is
+  gone, the names return until the client stops joining them. A durable fix is a
+  server-side reaper for empty, memberless, stale channels.
