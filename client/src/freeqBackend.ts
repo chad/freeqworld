@@ -39,6 +39,12 @@ export interface BackendOptions {
   onTyping?: (nick: string, isTyping: boolean) => void
   /** a peer answered "where are you?" with the room they're standing in */
   onHere?: (nick: string, channel: string) => void
+  /** the stored session could not be re-established (single-use token spent,
+   *  broker unreachable, …) — the app must prompt a fresh sign-in rather than
+   *  sit on a blank world */
+  onAuthError?: (reason: string) => void
+  /** this identity's web-token was minted on THIS page load and is unspent */
+  freshWebToken?: boolean
   /** someone's away state changed */
   onAway?: (nick: string, away: boolean) => void
 }
@@ -118,12 +124,19 @@ export class FreeqBackend {
           : undefined,
       brokerUrl: id?.oauth?.broker_url,
       brokerToken: id?.oauth?.broker_token || undefined,
-      skipInitialBrokerRefresh: Boolean(id?.oauth?.web_token),
+      // Only when the caller says this token is newly minted — web-tokens are
+      // single-use, so a stored one must be refreshed via the broker instead.
+      skipInitialBrokerRefresh: Boolean(opts.freshWebToken && id?.oauth?.web_token),
     })
 
     this.client.on('authenticated', (did: string) => {
       this.authedDid = did
       opts.onAuth?.(did)
+    })
+    this.client.on('authError', (reason: string) => {
+      // otherwise this fails completely silently and the world never arrives
+      console.warn('[freeqworld] auth failed:', reason)
+      this.opts.onAuthError?.(reason)
     })
     this.client.on('ready', () => {
       opts.onOpen?.(performance.now() - started)

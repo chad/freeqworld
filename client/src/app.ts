@@ -153,6 +153,7 @@ export class App {
     if (oauthIdentity) {
       this.identity = oauthIdentity
       el('landing').classList.add('hidden')
+      this.freshOAuth = true // this web-token has never been used yet
       this.connect('')
       this.toast(`◈ signed in as ${oauthIdentity.handle} — ${shortDid(oauthIdentity.did)}`)
       requestAnimationFrame(() => this.frame())
@@ -161,6 +162,9 @@ export class App {
     this.identity = loadIdentity()
     if (this.identity) {
       el('landing').classList.add('hidden')
+      // NOTE: no freshOAuth here — a stored web_token was already spent (the
+      // server consumes it on first authentication), so this connect MUST go
+      // through the broker for a new one.
       this.connect()
     } else if (this.backendKind() === 'town') {
       // read-only spectator behind the landing card (spec §6.1)
@@ -216,9 +220,20 @@ export class App {
     })
   }
 
+  /** True only on the page load that just consumed an `#oauth=` redirect: the
+   *  web-token in hand has never been presented to the server. */
+  private freshOAuth = false
+
   private connect(channel = this.channel): void {
     this.conn?.close()
     this.remotes.clear()
+    // SASL web-tokens are SINGLE-USE (freeq-server consumes one on first
+    // authentication). Replaying the copy in localStorage on a later page load
+    // fails auth, and the world then never arrives: blank map, empty roster,
+    // and no error anywhere. So only skip the broker refresh for a token we
+    // just minted; otherwise mint a fresh one from the durable broker_token.
+    const tokenIsFresh = this.freshOAuth
+    this.freshOAuth = false
     const common = {
       channel,
       identity: this.identity,
@@ -235,7 +250,12 @@ export class App {
       this.conn = new FreeqBackend({
         ...common,
         serverUrl: this.freeqUrl(),
+        freshWebToken: tokenIsFresh,
         avoidGatedSpawn: !localStorage.getItem('fimp-gate-accepted'),
+        onAuthError: (reason) => {
+          this.toast(`◇ ${reason}`)
+          el('landing').classList.remove('hidden')
+        },
         onAuth: (did) => {
           this.toast(`◈ DID authenticated with the server: ${shortDid(did)}`)
           this.updateInspectorMeta()
