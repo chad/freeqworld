@@ -7,7 +7,7 @@ import { verifyEvent } from '../../shared/src/signing'
 import { generateTilemap, isWalkable, roomFor, TILE, type Tilemap } from '../../shared/src/world'
 import { seededPrng } from '../../shared/src/hkdf'
 import type { MusicState } from '../../shared/src/music'
-import { ChiptuneEngine } from './audio'
+import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, type Identity } from './identity'
 import { TownConnection } from './net'
@@ -58,6 +58,8 @@ interface Emote {
   did: string
   emoji: string
   until: number
+  /** identity accent, for the ♪ that marks whose theme is playing */
+  color?: string
 }
 
 /** How dark a room is before its lights — the dungeon-crawler dial. */
@@ -100,6 +102,10 @@ export class App {
   private remotes = new Map<string, RemotePlayer>()
   private bubbles: Bubble[] = []
   private emotes: Emote[] = []
+  /** what the HUD is saying about the music, and for how long */
+  private nowPlayingTimer = 0
+  private roomCueName = ''
+  private cueLog: { kind: string; name: string; did?: string; reason?: string; at: number }[] = []
   private log: DurableEvent[] = []
   private lastMessageId: string | null = null
   private me = { x: 10, y: 10, facing: 'south' as WorldPosition['facing'], moving: false }
@@ -361,6 +367,7 @@ export class App {
     this.log = [...history]
     this.vaultPlain.clear()
     this.audio.setRoom(room.music.bpm, channel, room.music.base_cue)
+    this.audio.noteActivity() // arriving somewhere is a moment worth music
     document.querySelector('[data-testid="header-loc"]')!.textContent = `${this.town?.name ?? '—'} · ${room.name} · ${channel}`
     document.querySelector('[data-testid="header-topic"]')!.textContent = room.topic
     this.renderTranscript()
@@ -449,6 +456,7 @@ export class App {
         if (live) {
           this.addBubbleFor(msg.sender, msg.content)
           this.audio.speechBlip(msg.sender)
+          this.audio.noteActivity()
         }
       } else if (msg.enc) {
         void this.tryDecrypt(msg.id, msg.enc).then(() => {
@@ -458,6 +466,7 @@ export class App {
       } else if (live) {
         this.addBubbleFor(msg.sender, msg.content, msg.type === 'code' ? 'code' : 'text')
         this.audio.speechBlip(msg.sender)
+        this.audio.noteActivity()
         if (this.identity && this.mentionsMe(msg.content)) void this.audio.mentionStinger(msg.sender)
         // rekindling: our own message breaking >24h of silence in this room
         if (this.identity && msg.sender === this.identity.did) {
@@ -517,7 +526,11 @@ export class App {
       this.members.set(member.did, member)
       if (isNew && !silent) {
         this.transcriptSystem(`${member.display_name} arrived`)
-        void this.audio.playLeitmotif(member.avatar_did ?? member.did, 'arrival')
+        // your own arrival is already marked by your theme playing — quoting
+        // yourself on top of it was three "you" sounds at once
+        if (!this.isMe(member.did)) {
+          void this.audio.playLeitmotif(member.avatar_did ?? member.did, 'arrival')
+        }
         // arrival puff at wherever they materialize
         this.emotes.push({ did: member.did, emoji: '✧', until: performance.now() + 1400 })
       }
@@ -662,6 +675,85 @@ export class App {
     div.textContent = `· ${text}`
     t.appendChild(div)
     t.scrollTop = t.scrollHeight
+  }
+
+  private paintMusicModes(): void {
+    const mode = this.audio.getPrefs().mode
+    for (const btn of document.querySelectorAll<HTMLElement>('#music-modes button')) {
+      const on = btn.dataset.mode === mode
+      btn.style.borderColor = on ? 'var(--cyan, #56c9d6)' : 'var(--border, #2c2c40)'
+      btn.style.color = on ? 'var(--cyan, #56c9d6)' : 'inherit'
+    }
+    const hint = MUSIC_MODES.find((m) => m.mode === mode)?.hint ?? ''
+    const hintEl = document.getElementById('music-mode-hint')
+    if (hintEl) hintEl.textContent = hint
+    this.paintSoundButton(this.audio.muted)
+  }
+
+  private paintSoundButton(muted: boolean): void {
+    const label = MUSIC_MODES.find((m) => m.mode === this.audio.getPrefs().mode)?.label ?? 'on'
+    const el2 = document.getElementById('sound-btn')
+    if (el2) el2.textContent = muted ? '\u266a off' : `\u266a ${label}`
+  }
+
+  /** Say what is playing, and whose it is: a ♪ over their head in the world and
+   *  a line in the HUD, both in that identity's accent colour. */
+  private showNowPlaying(cue: Cue): void {
+    this.cueLog.push({ kind: cue.kind, name: cue.name, did: cue.did, reason: cue.reason, at: Math.round(performance.now()) })
+    if (this.cueLog.length > 24) this.cueLog.shift()
+    const chip = document.getElementById('nowplaying')
+    const text = document.getElementById('nowplaying-text')
+    const note = document.getElementById('nowplaying-note')
+    if (!chip || !text || !note) return
+
+    const paint = (label: string, color: string, holdMs: number) => {
+      text.textContent = label
+      note.style.color = color
+      text.style.color = color
+      chip.classList.remove('hidden')
+      window.clearTimeout(this.nowPlayingTimer)
+      this.nowPlayingTimer = window.setTimeout(() => {
+        // fall back to naming the room's own cue
+        text.textContent = this.roomCueName ? `${this.roomCueName} \u2014 this room's theme` : ''
+        note.style.color = 'var(--dim, #8a8896)'
+        text.style.color = 'var(--dim, #8a8896)'
+        if (!this.roomCueName) chip.classList.add('hidden')
+      }, holdMs)
+    }
+
+    if (cue.kind === 'bed') {
+      this.roomCueName = cue.name
+      paint(`${cue.name} \u2014 this room's theme`, 'var(--dim, #8a8896)', 4000)
+      return
+    }
+    if (cue.kind === 'rest') {
+      this.roomCueName = ''
+      text.textContent = 'the room goes quiet'
+      window.clearTimeout(this.nowPlayingTimer)
+      this.nowPlayingTimer = window.setTimeout(() => chip.classList.add('hidden'), 3500)
+      return
+    }
+
+    const dids = cue.dids ?? (cue.did ? [cue.did] : [])
+    const hold = Math.max(3200, cue.seconds * 1000 + 900)
+    for (const did of dids) {
+      void spriteFor(did).then(({ avatar }) => {
+        const color = String(avatar.traits.accent_palette)
+        // the ♪ floats over the person whose motif is sounding
+        this.emotes.push({ did, emoji: '\u266a', until: performance.now() + Math.min(2600, hold), color })
+        if (did === dids[0]) {
+          const who = this.members.get(did)?.display_name ?? shortDid(did)
+          const mine = this.identity && this.isMe(did)
+          const label = cue.kind === 'own' && mine ? 'your theme'
+            : cue.kind === 'ensemble' ? `${dids.length} motifs together`
+            : cue.reason === 'mention' ? `${who} is calling you`
+            : cue.reason === 'inspect' ? `${who}'s motif`
+            : mine ? 'your motif'
+            : `${who} arrived \u2014 their motif`
+          paint(label, color, hold)
+        }
+      })
+    }
   }
 
   private renderMembers(): void {
@@ -864,8 +956,26 @@ export class App {
     el('sound-btn').addEventListener('click', () => {
       const muted = this.audio.toggle()
       localStorage.setItem('fimp-sound', muted ? 'off' : 'on')
-      el('sound-btn').textContent = muted ? '♪ off' : '♪ on'
+      this.paintSoundButton(muted)
     })
+    // the music tells the interface whose theme it is playing
+    this.audio.onCue((cue) => this.showNowPlaying(cue))
+    // how much music: off / moments / breathing / always (spec §30.5)
+    const modeRow = el('music-modes')
+    for (const m of MUSIC_MODES) {
+      const btn = document.createElement('button')
+      btn.textContent = m.label
+      btn.dataset.mode = m.mode
+      btn.style.cssText = 'flex:1; padding:4px 2px; font-size:.72rem'
+      btn.title = m.hint
+      btn.addEventListener('click', () => {
+        this.audio.setPrefs({ mode: m.mode })
+        this.paintMusicModes()
+        this.audio.noteActivity()
+      })
+      modeRow.append(btn)
+    }
+    this.paintMusicModes()
     // separate levels for music, identity motifs and effects (spec §26)
     el('sound-more').addEventListener('click', (e) => {
       e.stopPropagation()
@@ -889,7 +999,7 @@ export class App {
     const autoStart = () => {
       if (localStorage.getItem('fimp-sound') !== 'off' && this.audio.muted) {
         this.audio.start() // unlocks audio inside the gesture (iOS)
-        el('sound-btn').textContent = '♪ on'
+        this.paintSoundButton(false)
         // arriving in the world is the one place you hear your OWN tune in full:
         // it plays over the room for a few bars and then hands over (spec §5.2,
         // "a brief identity leitmotif plays")
@@ -1790,12 +1900,15 @@ export class App {
 
     // emotes
     ctx.font = '8px monospace'
+    const emoteInk = ctx.fillStyle
     for (const e of this.emotes) {
       const target = this.findPlayer(e.did)
       if (!target) continue
       const age = 1 - (e.until - performance.now()) / 1800
+      ctx.fillStyle = e.color ?? emoteInk
       ctx.fillText(e.emoji, target.x * TILE_PX - cam.x - 4, (target.y - 3) * TILE_PX - cam.y - age * 8)
     }
+    ctx.fillStyle = emoteInk
 
     // ---- lighting: torch-lit darkness over the whole scene ----
     const now = performance.now()
@@ -2329,6 +2442,9 @@ export class App {
       doors: () => this.map?.doors ?? [],
       directory: () => this.town?.directory ?? [],
       audio: () => this.audio.status(),
+      // the last few things the music said, for diagnosing "why did I hear that"
+      cues: () => this.cueLog,
+      emotes: () => this.emotes.map((e) => ({ did: e.did, emoji: e.emoji, color: e.color })),
     }
   }
 

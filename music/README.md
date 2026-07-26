@@ -212,6 +212,31 @@ ringtones. So:
 | **someone else's motif** | they arrive (quiet, on the bar, budgeted) · you open their card (louder — you asked) · they @mention you (their motif *is* the notification, so you know who wants you without reading) |
 | **nobody's motif** | on every chat line. That's the speech blip — tinted by their leitmotif's first note and instrument, but never the motif itself (§30.5: "avoid constant reaction sounds") |
 
+### How much music, and knowing whose it is
+
+Constant looping is fatiguing, so the bed has **modes** rather than just on/off
+(spec §30.5 asks for "a focus soundtrack and silence"):
+
+| mode | what it does |
+|---|---|
+| `off` | no room music at all (motifs and effects keep their own levels) |
+| `moments` | plays only around arrivals, mentions and room changes, then fades |
+| `breathing` *(default)* | swells when the room is alive, **rests when it goes quiet** |
+| `always` | a continuous loop |
+
+`bedGain(mode, state, msSinceEvent)` is a pure function, so the policy is
+unit-tested rather than felt out. The level sits on its own node between the
+stems and the visitor's music volume, so "the room is quiet right now" and "I
+like music at 40%" never fight. The sound button shows the current mode
+(`♪ breathing`), so the state is visible without opening anything.
+
+**Whose theme is playing** is answered twice over: a `♪` floats over that
+person's head in the world, in their own identity accent colour, and a HUD chip
+names it — *"your theme"*, *"@bex arrived — their motif"*, *"@bex is calling
+you"*, or the room's own cue when nobody's motif is sounding. Both are driven by
+a `Cue` stream the engine emits (`onCue`), which the dev inspector also logs
+(`__fimp.cues()`) so "why did I just hear that" is answerable.
+
 How it stays musical rather than becoming a doorbell:
 
 - **Four stems, one render.** The bed is composed once and rendered as

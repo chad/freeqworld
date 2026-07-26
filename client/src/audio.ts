@@ -18,7 +18,7 @@
 
 import type { MusicState } from '../../shared/src/music'
 import { deriveLeitmotif } from '../../shared/src/leitmotif'
-import { RoomMusic } from '../../music/src/room.ts'
+import { MUSIC_MODES, RoomMusic, type Cue, type MusicMode } from '../../music/src/room.ts'
 import { themeForCue } from '../../music/src/themes.ts'
 import { midiToFreq } from '../../music/src/theory.ts'
 
@@ -26,10 +26,16 @@ export interface AudioPrefs {
   music: number
   motifs: number
   effects: number
+  /** how much music: off / moments / breathing / always (spec §30.5) */
+  mode: MusicMode
 }
 
 const PREFS_KEY = 'fimp-audio-prefs'
-const DEFAULT_PREFS: AudioPrefs = { music: 0.5, motifs: 0.75, effects: 0.6 }
+/** 'breathing' by default: the room's music swells when something is happening
+ *  and rests when it isn't, rather than looping at you forever. */
+const DEFAULT_PREFS: AudioPrefs = { music: 0.5, motifs: 0.75, effects: 0.6, mode: 'activity' }
+
+export { MUSIC_MODES, type Cue, type MusicMode }
 
 export class ChiptuneEngine {
   private engine: RoomMusic | null = null
@@ -40,6 +46,7 @@ export class ChiptuneEngine {
   private _muted = true
   private identityDid: string | null = null
   private prefs: AudioPrefs = { ...DEFAULT_PREFS }
+  private cueListeners: ((cue: Cue) => void)[] = []
 
   constructor() {
     try {
@@ -67,6 +74,7 @@ export class ChiptuneEngine {
   /** Separate music / motif / effects levels (spec §26 accessibility). */
   setPrefs(next: Partial<AudioPrefs>): AudioPrefs {
     this.prefs = { ...this.prefs, ...next }
+    if (next.mode) this.engine?.setMode(next.mode)
     try {
       localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs))
     } catch {
@@ -91,7 +99,9 @@ export class ChiptuneEngine {
     if (!this.engine) this.engine = new RoomMusic(undefined, { bars: 16 })
     this.engine.unlock() // synchronous, inside the gesture
     this.engine.setVolumes(this.prefs)
+    this.engine.setMode(this.prefs.mode)
     this.engine.setIdentity(this.identityDid)
+    for (const fn of this.cueListeners) this.engine.onCue(fn)
     this._muted = false
     if (this.state) this.engine.setMusicState(this.state)
     this.engine.enterRoom(themeForCue(this.cue, this.bpm, this.channel))
@@ -105,6 +115,19 @@ export class ChiptuneEngine {
   setState(state: MusicState): void {
     this.state = state
     if (!this._muted) this.engine?.setMusicState(state)
+  }
+
+  /** Subscribe to what the music is saying, so the interface can show whose
+   *  theme is playing. Safe to call before audio exists. */
+  onCue(fn: (cue: Cue) => void): void {
+    this.cueListeners.push(fn)
+    this.engine?.onCue(fn)
+  }
+
+  /** Something happened in this room — brings the music back up in the
+   *  'moments' and 'breathing' modes. */
+  noteActivity(): void {
+    this.engine?.noteActivity()
   }
 
   /** Room change. `cue` is the world's `music.base_cue` (spec §11.7). */

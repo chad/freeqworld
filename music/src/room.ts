@@ -93,6 +93,51 @@ export function nextBeatTime(
   return startedAt + Math.ceil(elapsed / beat) * beat
 }
 
+/** How much music the visitor wants. Constant loops are fatiguing, and the spec
+ *  asks for a focus soundtrack and silence as options (§30.5), so the bed can
+ *  rest instead of only being on or off. */
+export type MusicMode = 'off' | 'events' | 'activity' | 'always'
+
+export const MUSIC_MODES: { mode: MusicMode; label: string; hint: string }[] = [
+  { mode: 'off', label: 'off', hint: 'no room music (motifs and effects still follow their own levels)' },
+  { mode: 'events', label: 'moments', hint: 'only around arrivals, mentions and room changes' },
+  { mode: 'activity', label: 'breathing', hint: 'swells when the room is alive, rests when it goes quiet' },
+  { mode: 'always', label: 'always', hint: 'a continuous loop' },
+]
+
+export interface BedOptions {
+  /** 'activity': silence after this long with nothing happening */
+  restAfterMs?: number
+  /** 'events': how long a moment keeps the music up */
+  eventWindowMs?: number
+}
+
+/** The bed's overall level for a given mode and situation. Separate from the
+ *  visitor's music volume: this is the engine deciding whether music belongs
+ *  right now, which is what "don't play it all the time" means. */
+export function bedGain(
+  mode: MusicMode, state: MusicStateLike | null, msSinceEvent: number, opts: BedOptions = {},
+): number {
+  if (mode === 'off') return 0
+  if (mode === 'always') return 1
+  const eventWindow = opts.eventWindowMs ?? 22_000
+  if (mode === 'events') {
+    if (msSinceEvent >= eventWindow) return 0
+    // hold, then fade out over the last three seconds of the window
+    return Math.min(1, (eventWindow - msSinceEvent) / 3_000)
+  }
+  // 'activity': a live room keeps the music up; a still one is allowed silence
+  const restAfter = opts.restAfterMs ?? 40_000
+  const energy = state?.energy ?? 0
+  const density = state?.density ?? 0
+  const alive = Math.max(energy, density)
+  if (msSinceEvent < eventWindow) return 1
+  if (alive > 0.25) return 1
+  const past = msSinceEvent - eventWindow
+  const window = Math.max(1, restAfter - eventWindow)
+  return Math.max(0, 1 - past / window)
+}
+
 export type QuoteReason = 'arrival' | 'inspect' | 'mention' | 'self' | 'ensemble'
 
 export interface BudgetOptions {
@@ -195,6 +240,21 @@ export function splitStems(score: Score): Record<StemName, Score> {
 
 // --- the live engine --------------------------------------------------------
 
+/** Emitted whenever the music says something about somebody, so the interface
+ *  can show whose theme you're hearing. */
+export interface Cue {
+  kind: 'bed' | 'quote' | 'own' | 'ensemble' | 'rest'
+  /** whose motif, when it's a person */
+  did?: string
+  dids?: string[]
+  reason?: QuoteReason
+  /** human-readable: a room name, or a person's motif */
+  name: string
+  seconds: number
+  /** audio-clock time it starts (may be slightly in the future: bar-aligned) */
+  at: number
+}
+
 export interface RoomMusicOptions {
   /** bars of bed to render; shorter = less memory, which matters on phones */
   bars?: number
@@ -227,6 +287,14 @@ export class RoomMusic {
   private selfDid: string | null = null
   private selfLoop: number | null = null
   private stemCache = new Map<string, Record<StemName, AudioBuffer>>()
+  private mode: MusicMode = 'activity'
+  private lastEventAt = 0
+  private restTimer: number | null = null
+  /** whether the bed is currently resting, so wake/rest is announced once and
+   *  not re-announced on every ramp while a fade is still in progress */
+  private resting = false
+  private bedGainNode: GainNode
+  private listeners: ((cue: Cue) => void)[] = []
 
   constructor(ctx?: AudioContext, opts: RoomMusicOptions = {}) {
     const Ctor: typeof AudioContext =
@@ -242,6 +310,12 @@ export class RoomMusic {
     this.motifBus.gain.value = 0.75
     this.effectsBus.gain.value = 0.6
     for (const bus of [this.musicBus, this.motifBus, this.effectsBus]) bus.connect(this.ctx.destination)
+    // the mode/rest level sits between the stems and the visitor's music level,
+    // so "the room is quiet right now" and "I like music at 40%" don't fight
+    this.bedGainNode = this.ctx.createGain()
+    this.bedGainNode.gain.value = 1
+    this.bedGainNode.connect(this.musicBus)
+    this.lastEventAt = Date.now()
   }
 
   /** MUST be called synchronously inside a user gesture (see web.ts — iOS only
@@ -270,6 +344,64 @@ export class RoomMusic {
     const elapsed = this.ctx.currentTime - this.current.startedAt
     const beats = (elapsed * this.current.theme.bpm) / 60
     return { beats, bars: beats / this.current.theme.meter[0] }
+  }
+
+  onCue(fn: (cue: Cue) => void): () => void {
+    this.listeners.push(fn)
+    return () => {
+      this.listeners = this.listeners.filter((f) => f !== fn)
+    }
+  }
+
+  private emit(cue: Cue): void {
+    for (const fn of this.listeners) {
+      try {
+        fn(cue)
+      } catch {
+        /* a broken listener must not take the music down */
+      }
+    }
+  }
+
+  setMode(mode: MusicMode): void {
+    this.mode = mode
+    this.noteActivity() // a deliberate change counts as a moment
+    this.applyBedGain(0.4)
+  }
+
+  getMode(): MusicMode {
+    return this.mode
+  }
+
+  /** Something happened in the room (someone spoke, arrived, you changed rooms).
+   *  In 'events' and 'activity' modes this is what brings the music up. */
+  noteActivity(): void {
+    this.lastEventAt = Date.now()
+    this.applyBedGain(0.5)
+  }
+
+  private applyBedGain(fade = 1.5): void {
+    const target = bedGain(this.mode, this.state, Date.now() - this.lastEventAt)
+    const now = this.ctx.currentTime
+    const prev = this.bedGainNode.gain.value
+    this.bedGainNode.gain.cancelScheduledValues(now)
+    this.bedGainNode.gain.setValueAtTime(prev, now)
+    this.bedGainNode.gain.linearRampToValueAtTime(target, now + fade)
+    // announce the TRANSITION, not the ramp: reading the live gain value mid-fade
+    // re-announced the room every couple of seconds and stamped on cues that
+    // matter more (like "your theme")
+    const nowResting = target <= 0.02
+    if (nowResting !== this.resting) {
+      this.resting = nowResting
+      if (nowResting) this.emit({ kind: 'rest', name: 'the room goes quiet', seconds: fade, at: now })
+      else if (this.current) this.emit({ kind: 'bed', name: this.current.theme.name, seconds: 0, at: now })
+    }
+  }
+
+  private startRestTicker(): void {
+    if (this.restTimer !== null) return
+    // one slow tick; the ramps do the actual work
+    this.restTimer = window.setInterval(() => this.applyBedGain(2.5), 2_000)
   }
 
   setVolumes(v: { music?: number; motifs?: number; effects?: number }): void {
@@ -316,7 +448,7 @@ export class RoomMusic {
       const gain = this.ctx.createGain()
       gain.gain.setValueAtTime(0, t)
       gain.gain.linearRampToValueAtTime(targets[name], t + fade)
-      gain.connect(this.musicBus)
+      gain.connect(this.bedGainNode)
       const src = this.ctx.createBufferSource()
       src.buffer = buffers[name]
       src.loop = true
@@ -334,6 +466,10 @@ export class RoomMusic {
     }
     this.budget.reset()
     this.applySelfLoop()
+    this.resting = false
+    this.applyBedGain(0.6)
+    this.startRestTicker()
+    this.emit({ kind: 'bed', name: theme.name, seconds: 0, at: t })
   }
 
   stop(fade = 0.4): void {
@@ -352,11 +488,16 @@ export class RoomMusic {
       clearInterval(this.selfLoop)
       this.selfLoop = null
     }
+    if (this.restTimer !== null) {
+      clearInterval(this.restTimer)
+      this.restTimer = null
+    }
   }
 
   /** Server-computed MusicState (spec §11.2) moves the layer gains. */
   setMusicState(state: MusicStateLike): void {
     this.state = state
+    this.applyBedGain(3)
     const cur = this.current
     if (!cur) return
     const targets = stemGains(state)
@@ -396,9 +537,12 @@ export class RoomMusic {
     )
     if (!alone) return
     const barSeconds = (cur.theme.meter[0] * 60) / cur.theme.bpm
-    const fire = () => void this.quote(this.selfDid!, 'self')
-    fire()
-    this.selfLoop = window.setInterval(fire, barSeconds * 4000)
+    // deliberately NOT fired straight away: arriving already plays your theme,
+    // and stacking your motif on top of it is the room shouting at you
+    this.selfLoop = window.setInterval(
+      () => void this.quote(this.selfDid!, 'self'),
+      barSeconds * 4000,
+    )
   }
 
   /**
@@ -429,6 +573,15 @@ export class RoomMusic {
     src.buffer = buffer
     src.connect(gain).connect(this.motifBus)
     src.start(when)
+    if (reason !== 'self') this.noteActivity()
+    this.emit({
+      kind: reason === 'self' ? 'own' : 'quote',
+      did,
+      reason,
+      name: canon.notes.length + ' notes',
+      seconds: buffer.duration,
+      at: when,
+    })
 
     // duck the room's melody so the person is heard as the melody
     if (reason !== 'self') {
@@ -463,6 +616,13 @@ export class RoomMusic {
       src.connect(gain).connect(this.motifBus)
       src.start(start + i * beat) // canon-style staggered entries
     })
+    this.emit({
+      kind: 'ensemble',
+      dids: dids.slice(0, 4),
+      name: `${Math.min(4, dids.length)} motifs`,
+      seconds: 2 + dids.length * (beat as number),
+      at: start,
+    })
     return true
   }
 
@@ -483,6 +643,7 @@ export class RoomMusic {
     src.buffer = buffer
     src.connect(gain).connect(this.motifBus)
     src.start(t)
+    this.emit({ kind: 'own', did, name: minted.theme.name, seconds: buffer.duration, at: t })
     // the room ducks out of the way, then comes back up
     const cur = this.current
     if (cur) {

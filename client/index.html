@@ -180,7 +180,10 @@
              motifs separately -->
         <div id="sound-panel" class="hidden" style="position:absolute; right:0; top:110%; z-index:40;
              background:var(--panel,#14141f); border:1px solid var(--border,#2c2c40); border-radius:8px;
-             padding:10px 12px; width:210px; font-size:.78rem; color:var(--dim,#8a8896)">
+             padding:10px 12px; width:238px; font-size:.78rem; color:var(--dim,#8a8896)">
+          <div style="margin-bottom:4px">how much music</div>
+          <div id="music-modes" style="display:flex; gap:4px; margin-bottom:4px"></div>
+          <div id="music-mode-hint" style="margin-bottom:10px; line-height:1.4; min-height:2.6em; opacity:.8"></div>
           <label style="display:block; margin-bottom:8px">room music
             <input id="vol-music" type="range" min="0" max="1" step="0.05" style="width:100%" />
           </label>
@@ -195,6 +198,14 @@
     </header>
     <main>
       <div id="worldwrap">
+        <!-- what you're hearing, and whose it is -->
+        <div id="nowplaying" class="hidden" style="position:absolute; left:10px; bottom:10px; z-index:20;
+             display:flex; align-items:center; gap:7px; padding:5px 10px; border-radius:999px;
+             background:rgba(13,13,20,.72); border:1px solid var(--border,#2c2c40);
+             font-size:.74rem; color:var(--dim,#8a8896); pointer-events:none; max-width:60%">
+          <span id="nowplaying-note" style="font-size:.95rem">♪</span>
+          <span id="nowplaying-text"></span>
+        </div>
         <canvas id="world" data-testid="world-canvas" tabindex="0"></canvas>
         <div id="landing" class="overlay" data-testid="landing">
           <div class="card">

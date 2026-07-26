@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MotifBudget, motifNotesInKey, nextBarTime, nextBeatTime, quoteScore, splitStems, stemGains, STEMS,
+  bedGain, MotifBudget, motifNotesInKey, MUSIC_MODES, nextBarTime, nextBeatTime, quoteScore,
+  splitStems, stemGains, STEMS,
 } from './room.ts'
 import { compose } from './compose.ts'
 import { getTheme, themeForCue, THEMES } from './themes.ts'
@@ -202,6 +203,58 @@ describe('every room the world can build has authored music', () => {
       const score = compose({ ...theme, bars: 8 })
       expect(score.notes.length, t).toBeGreaterThan(20)
       expect(splitStems(score).base.notes.length, t).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('how much music (spec §30.5: offer a focus soundtrack and silence)', () => {
+  const busy = { energy: 0.6, tension: 0.2, density: 0.5, brightness: 0.5 }
+  const still = { energy: 0.02, tension: 0, density: 0, brightness: 0.4 }
+
+  it('off is actually off', () => {
+    expect(bedGain('off', busy, 0)).toBe(0)
+    expect(bedGain('off', busy, 999_999)).toBe(0)
+  })
+
+  it('always keeps playing, however dead the room is', () => {
+    expect(bedGain('always', still, 10 * 60_000)).toBe(1)
+  })
+
+  it('"moments" plays around an event and then leaves you alone', () => {
+    expect(bedGain('events', still, 0)).toBe(1)
+    expect(bedGain('events', still, 10_000)).toBe(1)
+    expect(bedGain('events', still, 20_500)).toBeGreaterThan(0) // fading out
+    expect(bedGain('events', still, 20_500)).toBeLessThan(1)
+    expect(bedGain('events', still, 30_000)).toBe(0)
+  })
+
+  it('"breathing" rests in a still room and stays up in a live one', () => {
+    expect(bedGain('activity', still, 0)).toBe(1)
+    expect(bedGain('activity', still, 60_000)).toBe(0) // nothing happening: silence
+    expect(bedGain('activity', busy, 60_000)).toBe(1) // a busy room keeps its music
+    // and it fades rather than cutting
+    const mid = bedGain('activity', still, 31_000)
+    expect(mid).toBeGreaterThan(0)
+    expect(mid).toBeLessThan(1)
+  })
+
+  it('never returns a level outside the mix', () => {
+    for (const mode of MUSIC_MODES.map((m) => m.mode)) {
+      for (const ms of [0, 5_000, 25_000, 90_000]) {
+        for (const st of [busy, still, null]) {
+          const g = bedGain(mode, st, ms)
+          expect(g).toBeGreaterThanOrEqual(0)
+          expect(g).toBeLessThanOrEqual(1)
+        }
+      }
+    }
+  })
+
+  it('offers a mode for every intent, each with a label the UI can show', () => {
+    expect(MUSIC_MODES.map((m) => m.mode)).toEqual(['off', 'events', 'activity', 'always'])
+    for (const m of MUSIC_MODES) {
+      expect(m.label.length).toBeGreaterThan(1)
+      expect(m.hint.length).toBeGreaterThan(10)
     }
   })
 })
