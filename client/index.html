@@ -173,6 +173,7 @@
         <button id="mode-chat" data-testid="mode-chat" title="Conventional chat client">Chat</button>
         <button id="mode-dev" data-testid="mode-dev" title="Protocol inspector">Dev</button>
       </span>
+      <button id="help-btn" title="How to play (?)" style="min-width:34px;text-align:center">?</button>
       <span id="sound-wrap" style="position:relative">
         <button id="sound-btn" title="Toggle chiptune soundtrack" style="min-width:64px; text-align:center">♪ off</button>
         <button id="sound-more" title="Sound levels: music, identity motifs, effects" style="padding:2px 6px">▾</button>
@@ -291,6 +292,13 @@
             <h1 style="font-size:1rem">TOWN MAP <span style="color:var(--dim);font-size:0.75rem">· circles are real channels, sized by live souls · click to travel</span></h1>
             <canvas id="townmap-canvas" width="600" height="380" style="width:600px;height:380px;cursor:pointer"></canvas>
             <div><button id="townmap-close">Close</button></div>
+          </div>
+        </div>
+        <div id="helpcard" class="overlay hidden" data-testid="help-card">
+          <div class="card" style="min-width:min(620px,94vw);max-height:82vh;overflow:auto">
+            <h1 style="font-size:1rem">How to play <span style="color:var(--dim);font-weight:400;font-size:.82rem">— press ? any time</span></h1>
+            <div id="help-body" style="margin-top:6px"></div>
+            <button id="help-close" style="margin-top:12px">Close</button>
           </div>
         </div>
         <div id="objcard" class="overlay hidden" data-testid="object-card">

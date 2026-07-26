@@ -21,6 +21,12 @@ import { fileURLToPath } from 'node:url'
 const SERVER = process.argv[2] ?? 'wss://irc.freeq.at/irc'
 const CHANNELS = (process.argv[3] ?? '#general,#lobby,#dev').split(',')
 
+/** A room counts as gone quiet after a day of silence; a courier run into a
+ *  room quiet for six hours pays double. Both are measured against real message
+ *  timestamps (CHATHISTORY + live traffic), not a session buffer. */
+const REKINDLE_SILENCE_MS = 24 * 3600 * 1000
+const COURIER_BONUS_QUIET_MS = 6 * 3600 * 1000
+
 const SEED_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '.agents')
 mkdirSync(SEED_DIR, { recursive: true })
 
@@ -136,12 +142,22 @@ for (const [i, agent] of AGENTS.entries()) {
   })
   client.on('channelListEntry', (e) => directory.push(e))
   client.on('channelListEnd', () => directory.sort((a, b) => b.count - a.count))
+  /** channel -> ms epoch of the most recent real message we know of. Seeded from
+   *  CHATHISTORY, so it survives a restart and means what it says. */
+  const lastMsgAt = new Map()
+  const noteActivity = (ch, when) => {
+    const ms = when instanceof Date ? when.getTime() : Number(when) || Date.now()
+    if (ms > (lastMsgAt.get(ch) ?? 0)) lastMsgAt.set(ch, ms)
+  }
+  const quietForMs = (ch) => Date.now() - (lastMsgAt.get(ch) ?? 0)
+
   client.on('historyBatch', (ch, messages) => {
     // everyone already in the logs is a regular, not a newcomer
     for (const m of messages) if (m.from) seen.add(m.from.toLowerCase())
     saveSeen()
     const buf = history.get(ch)
     if (buf) buf.push(...messages.filter((m) => !m.isSystem && m.text))
+    for (const m of messages) if (m.text && !m.isSystem) noteActivity(ch, m.timestamp)
   })
 
   // courier quests: issued over DM, completed by saying the phrase in the
@@ -177,7 +193,7 @@ for (const [i, agent] of AGENTS.entries()) {
     if (q.kind === 'survey')
       return `SURVEY for ${nick}: travel to ${q.target}, read what the room says it is, and DM me its topic. i will check your report against the register.`
     if (q.kind === 'rekindle')
-      return `REKINDLE for ${nick}: ${q.target} has gone quiet. go there and say something worth answering — i keep a post there and will witness it.`
+      return `REKINDLE for ${nick}: ${q.target} has been silent${q.quietHours ? ` for ${q.quietHours > 47 ? `${Math.floor(q.quietHours / 24)} days` : `${q.quietHours} hours`}` : ''}. go there and say something worth answering — i keep a post there and will witness it. waking a dead room pays double.`
     if (q.kind === 'escort')
       return `ESCORT for ${nick}: ${q.newcomer} is new here and turned up in ${q.target}. greet them BY NAME and draw a reply out of them — the run completes when they answer. a stranger made welcome is worth double.`
     return `COURIER RUN for ${nick}: carry this sealed phrase to ${q.target} and say it aloud: ${q.phrase} — i keep a post there and will confirm the delivery myself.${q.bonus ? ' that room is quiet; the run pays double.' : ''}`
@@ -207,7 +223,18 @@ for (const [i, agent] of AGENTS.entries()) {
       if (!pick) return `nothing needs charting right now, ${nick} — say "quest" for a courier run instead.`
       q = { kind: 'survey', target: pick.name, bonus: false }
     } else if (kind === 'rekindle') {
-      q = { kind: 'rekindle', target: quietest, bonus: true }
+      // Only a room that has genuinely gone quiet can be rekindled. Before this
+      // gate the run paid double for typing one sentence in whichever channel
+      // happened to have the fewest messages in this session's buffer — the
+      // cheapest XP in the game, and it rewarded talking, which the ledger is
+      // supposed to never do.
+      const stale = CHANNELS
+        .filter((c) => quietForMs(c) >= REKINDLE_SILENCE_MS)
+        .sort((x, y) => quietForMs(y) - quietForMs(x))[0]
+      if (!stale) {
+        return `every room i watch has been spoken in today, ${nick} — nothing to rekindle. say "quest" for a courier run, or come back when somewhere has gone quiet.`
+      }
+      q = { kind: 'rekindle', target: stale, bonus: true, quietHours: Math.floor(quietForMs(stale) / 3600_000) }
     } else if (kind === 'escort') {
       const day = Date.now() - 24 * 3600 * 1000
       const fresh = [...newcomers.values()]
@@ -217,7 +244,8 @@ for (const [i, agent] of AGENTS.entries()) {
       if (!pick) return `nobody new has turned up lately, ${nick} — say "quest" for a courier run and i'll send word when someone arrives.`
       q = { kind: 'escort', target: pick.channel, newcomer: pick.nick, courier: nick, bonus: true }
     } else {
-      q = { kind: 'courier', phrase: `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`, target: quietest, bonus: (history.get(quietest)?.length ?? 0) < 5 }
+      // double pay for carrying word into a room that has actually been quiet
+      q = { kind: 'courier', phrase: `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`, target: quietest, bonus: quietForMs(quietest) >= COURIER_BONUS_QUIET_MS }
     }
     quests.set(nick.toLowerCase(), q)
     saveQuests()
@@ -319,6 +347,10 @@ for (const [i, agent] of AGENTS.entries()) {
       buf.push(msg)
       if (buf.length > 300) buf.shift()
     }
+    // record real activity AFTER the quest checks below have read it, so a
+    // rekindle is judged on the silence that existed before this line
+    const noteThisMessage = () => noteActivity(ch, msg.timestamp ?? Date.now())
+    setTimeout(noteThisMessage, 0)
 
     const fromKey = msg.from.toLowerCase()
     // a voice never heard here before — someone worth welcoming

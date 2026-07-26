@@ -9,6 +9,7 @@ import { seededPrng } from '../../shared/src/hkdf'
 import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
+import { helpHtml } from './help'
 import { LADDERS } from '../../shared/src/xp'
 import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, type Identity } from './identity'
@@ -993,6 +994,8 @@ export class App {
     }
     this.paintMusicModes()
     // separate levels for music, identity motifs and effects (spec §26)
+    el('help-btn').addEventListener('click', () => void this.showHelp())
+    el('help-close').addEventListener('click', () => el('helpcard').classList.add('hidden'))
     el('sound-more').addEventListener('click', (e) => {
       e.stopPropagation()
       el('sound-panel').classList.toggle('hidden')
@@ -1070,13 +1073,17 @@ export class App {
       this.openSparkBook()
     } else if (k === 'm') {
       this.toggleTownMap()
+    } else if (k === '?' || (k === '/' && e.shiftKey)) {
+      void this.showHelp()
+    } else if (k === 'h') {
+      void this.showHelp()
     } else if (k === 'e') {
       this.interact()
     } else if (k === ' ') {
       this.jump()
       e.preventDefault()
     } else if (e.key === 'Escape') {
-      for (const id of ['idcard', 'objcard', 'travel', 'sparkbook', 'lightbox', 'townmap']) el(id).classList.add('hidden')
+      for (const id of ['idcard', 'objcard', 'travel', 'sparkbook', 'lightbox', 'townmap', 'helpcard']) el(id).classList.add('hidden')
     }
   }
 
@@ -1204,6 +1211,15 @@ export class App {
   /** The Obelisk of standing: levels and boards, computed from the signed
    *  completion log and verified in this browser. Nothing here is a score the
    *  server keeps for you — the numbers are a proof anyone can recompute. */
+  /** How to play. Built from the same constants that score the game, so it can
+   *  never promise something the code doesn't do. */
+  private async showHelp(): Promise<void> {
+    el('helpcard').classList.remove('hidden')
+    const body = el('help-body')
+    const mine = await standingFor(this.identity?.did ?? null)
+    body.innerHTML = helpHtml({ channel: this.channel, xp: mine.xp, runs: mine.runs })
+  }
+
   private async renderObelisk(body: HTMLElement): Promise<void> {
     body.innerHTML = '<div style="color:var(--dim)">reading the signed ledger…</div>'
     const [all, mine] = await Promise.all([board(), standingFor(this.identity?.did ?? null)])

@@ -90,6 +90,57 @@ export const LEVELS: LevelDef[] = [
   { level: 20, title: 'Witness', at: 10000, unlock: 'countersign the work of others' },
 ]
 
+/** The runs a witness can actually confirm, described once so the help page and
+ *  the scoring table can never disagree. `xp` is READ FROM the same weights that
+ *  award it — the previous drift (a doc claiming rekindle needed a day of
+ *  silence when nothing checked) is exactly what this prevents. */
+export interface QuestKind {
+  id: string
+  label: string
+  ask: string
+  doThis: string
+  witnessedBy: string
+  xp: number
+  alwaysDouble?: boolean
+}
+
+export const QUEST_KINDS: QuestKind[] = [
+  {
+    id: 'courier',
+    label: 'Courier run',
+    ask: 'cartographer, quest',
+    doThis: 'it DMs you a sealed phrase and a room — go there and say the phrase aloud',
+    witnessedBy: 'the Cartographer is a member of that channel and sees you say it',
+    xp: XP_BY_KIND.courier!,
+  },
+  {
+    id: 'survey',
+    label: 'Survey',
+    ask: 'cartographer, quest survey',
+    doThis: "read the named room's topic, then DM the Cartographer what it says",
+    witnessedBy: "checked against the channel's real topic in the LIST register",
+    xp: XP_BY_KIND.survey!,
+  },
+  {
+    id: 'rekindle',
+    label: 'Rekindle',
+    ask: 'cartographer, quest rekindle',
+    doThis: 'go to the room it names — one that has genuinely been silent for over a day — and say something worth answering',
+    witnessedBy: 'the silence is measured from real message timestamps; only a dead room can be offered',
+    xp: XP_BY_KIND.rekindle!,
+    alwaysDouble: true,
+  },
+  {
+    id: 'escort',
+    label: 'Escort',
+    ask: 'cartographer, quest escort',
+    doThis: 'greet the newcomer it names BY NAME in their room, and draw a reply out of them',
+    witnessedBy: 'both halves are witnessed — the greeting and their answer',
+    xp: XP_BY_KIND.escort!,
+    alwaysDouble: true,
+  },
+]
+
 export interface Completion {
   /** the DID the XP belongs to */
   player: string
