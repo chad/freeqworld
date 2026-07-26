@@ -102,3 +102,27 @@ describe('socket shell integration', () => {
     onB.ws.close()
   })
 })
+
+// Regression: the SPA fallback used to answer ANY missing path with index.html.
+// A browser holding a cached page would request a hashed bundle that a later
+// deploy had deleted, receive HTML with a JS content-type, fail to parse it,
+// and render a blank world — which is exactly what happened in production.
+describe('static asset serving', () => {
+  it('404s a missing hashed asset instead of serving HTML as JavaScript', async () => {
+    const res = await fetch(`http://localhost:${PORT_A}/assets/index-DEADBEEF.js`)
+    expect(res.status).toBe(404)
+    const body = await res.text()
+    expect(body).not.toContain('<!doctype html')
+    expect(res.headers.get('content-type') ?? '').not.toContain('text/html')
+  })
+
+  it('404s any missing file with an extension, but still SPA-falls-back for routes', async () => {
+    expect((await fetch(`http://localhost:${PORT_A}/nope.png`)).status).toBe(404)
+    expect((await fetch(`http://localhost:${PORT_A}/some/deep/route`)).status).toBe(200)
+  })
+
+  it('tells browsers to revalidate the HTML so a deploy is picked up', async () => {
+    const res = await fetch(`http://localhost:${PORT_A}/`)
+    expect(res.headers.get('cache-control') ?? '').toContain('no-cache')
+  })
+})

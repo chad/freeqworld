@@ -14,6 +14,15 @@ import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
 const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
 
+/** Hashed build assets are immutable and cached hard; the HTML that POINTS at
+ *  them must always be revalidated, or a deploy leaves returning visitors on a
+ *  stale page referencing bundles that no longer exist. */
+function cacheHeaders(filePath: string): Record<string, string> {
+  return filePath.startsWith('/assets/')
+    ? { 'cache-control': 'public, max-age=31536000, immutable' }
+    : { 'cache-control': 'no-cache, must-revalidate' }
+}
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -177,7 +186,7 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     }
     try {
       const body = await readFile(pfpFull)
-      res.writeHead(200, { 'content-type': MIME[extname(pfpFull)] ?? 'application/octet-stream' })
+      res.writeHead(200, { 'content-type': MIME[extname(pfpFull)] ?? 'application/octet-stream', ...cacheHeaders(sub) })
       res.end(body)
     } catch {
       res.writeHead(404)
@@ -188,7 +197,19 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
 
   // static client
   let filePath = path === '/' ? '/index.html' : path
-  if (!existsSync(join(CLIENT_DIST, filePath))) filePath = '/index.html' // SPA fallback
+  if (!existsSync(join(CLIENT_DIST, filePath))) {
+    // A request for a FILE that doesn't exist must 404. It must never fall
+    // back to index.html: a browser holding a cached page asks for a hashed
+    // bundle that a later deploy deleted, and answering with HTML means the
+    // module fails to parse and the world comes up blank forever. Only
+    // extensionless paths (SPA routes) fall back.
+    if (/\.[a-z0-9]+$/i.test(filePath)) {
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      res.end('not found')
+      return
+    }
+    filePath = '/index.html'
+  }
   const full = join(CLIENT_DIST, filePath)
   if (!full.startsWith(CLIENT_DIST)) {
     res.writeHead(403)
@@ -197,7 +218,7 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   }
   try {
     const body = await readFile(full)
-    res.writeHead(200, { 'content-type': MIME[extname(full)] ?? 'application/octet-stream' })
+    res.writeHead(200, { 'content-type': MIME[extname(full)] ?? 'application/octet-stream', ...cacheHeaders(filePath) })
     res.end(body)
   } catch {
     res.writeHead(404)
