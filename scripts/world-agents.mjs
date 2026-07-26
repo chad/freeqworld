@@ -54,7 +54,7 @@ const POS_TAG = '+freeq.at/world-pos'
 
 /** Which run the courier asked for. Defaults to the classic courier run. */
 function questKind(text) {
-  const m = /quest\s+(survey|rekindle)/i.exec(text)
+  const m = /quest\s+(survey|rekindle|escort)/i.exec(text)
   return m ? m[1].toLowerCase() : 'courier'
 }
 
@@ -97,7 +97,7 @@ const AGENTS = [
       const surveyed = ctx.trySurvey(ctx.from, ctx.text)
       if (surveyed) return surveyed
       if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
-      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, or "quest rekindle" to wake a quiet one — real work, verified in the real channel.`
+      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, or "quest escort" to make a newcomer welcome — real work, verified in the real channel.`
     },
   },
 ]
@@ -135,6 +135,9 @@ for (const [i, agent] of AGENTS.entries()) {
   client.on('channelListEntry', (e) => directory.push(e))
   client.on('channelListEnd', () => directory.sort((a, b) => b.count - a.count))
   client.on('historyBatch', (ch, messages) => {
+    // everyone already in the logs is a regular, not a newcomer
+    for (const m of messages) if (m.from) seen.add(m.from.toLowerCase())
+    saveSeen()
     const buf = history.get(ch)
     if (buf) buf.push(...messages.filter((m) => !m.isSystem && m.text))
   })
@@ -154,11 +157,27 @@ for (const [i, agent] of AGENTS.entries()) {
     try { writeFileSync(questPath, JSON.stringify(Object.fromEntries(quests))) } catch { /* disk hiccup */ }
   }
   const AGENT_NICKS = AGENTS.map((a) => a.nick)
+  // Who has spoken here before. Seeded from CHATHISTORY so long-time regulars
+  // are never mistaken for newcomers, and persisted so a restart doesn't make
+  // the whole channel "new" again.
+  const seenPath = join(SEED_DIR, `seen-${agent.nick}.json`)
+  let seen = new Set()
+  try {
+    if (existsSync(seenPath)) seen = new Set(JSON.parse(readFileSync(seenPath, 'utf8')))
+  } catch { /* fresh */ }
+  const saveSeen = () => {
+    try { writeFileSync(seenPath, JSON.stringify([...seen].slice(-800))) } catch { /* disk hiccup */ }
+  }
+  /** nickLower -> { nick, channel, ts } for first-timers seen in the last day */
+  const newcomers = new Map()
+
   const questBrief = (nick, q) => {
     if (q.kind === 'survey')
       return `SURVEY for ${nick}: travel to ${q.target}, read what the room says it is, and DM me its topic. i will check your report against the register.`
     if (q.kind === 'rekindle')
       return `REKINDLE for ${nick}: ${q.target} has gone quiet. go there and say something worth answering — i keep a post there and will witness it.`
+    if (q.kind === 'escort')
+      return `ESCORT for ${nick}: ${q.newcomer} is new here and turned up in ${q.target}. greet them BY NAME and draw a reply out of them — the run completes when they answer. a stranger made welcome is worth double.`
     return `COURIER RUN for ${nick}: carry this sealed phrase to ${q.target} and say it aloud: ${q.phrase} — i keep a post there and will confirm the delivery myself.${q.bonus ? ' that room is quiet; the run pays double.' : ''}`
   }
 
@@ -183,6 +202,14 @@ for (const [i, agent] of AGENTS.entries()) {
       q = { kind: 'survey', target: pick.name, bonus: false }
     } else if (kind === 'rekindle') {
       q = { kind: 'rekindle', target: quietest, bonus: true }
+    } else if (kind === 'escort') {
+      const day = Date.now() - 24 * 3600 * 1000
+      const fresh = [...newcomers.values()]
+        .filter((n) => n.ts > day && n.nick.toLowerCase() !== nick.toLowerCase())
+        .sort((a, b) => a.ts - b.ts)
+      const pick = fresh[0]
+      if (!pick) return `nobody new has turned up lately, ${nick} — say "quest" for a courier run and i'll send word when someone arrives.`
+      q = { kind: 'escort', target: pick.channel, newcomer: pick.nick, courier: nick, bonus: true }
     } else {
       q = { kind: 'courier', phrase: `PKT-${Math.random().toString(36).slice(2, 6).toUpperCase()}`, target: quietest, bonus: (history.get(quietest)?.length ?? 0) < 5 }
     }
@@ -243,6 +270,38 @@ for (const [i, agent] of AGENTS.entries()) {
     if (buf) {
       buf.push(msg)
       if (buf.length > 300) buf.shift()
+    }
+
+    const fromKey = msg.from.toLowerCase()
+    // a voice never heard here before — someone worth welcoming
+    if (!seen.has(fromKey)) {
+      seen.add(fromKey)
+      saveSeen()
+      newcomers.set(fromKey, { nick: msg.from, channel: ch, ts: Date.now() })
+      console.log(`[${agent.nick}] newcomer: ${msg.from} in ${ch}`)
+    }
+
+    // ESCORT, half one: the courier greets the newcomer by name
+    const mine = quests.get(fromKey)
+    if (mine?.kind === 'escort' && ch === mine.target && !mine.greeted && msg.text.toLowerCase().includes(mine.newcomer.toLowerCase())) {
+      mine.greeted = Date.now()
+      saveQuests()
+      console.log(`[${agent.nick}] escort greeted: ${msg.from} -> ${mine.newcomer}`)
+    }
+    // ESCORT, half two: the newcomer answers. Only then is anyone welcomed —
+    // this is why the run can't be farmed by shouting hello at an empty room.
+    for (const [courierKey, q] of [...quests]) {
+      if (q.kind !== 'escort' || !q.greeted || ch !== q.target) continue
+      // live events arrive in order, so anything here is after the greeting
+      if (fromKey !== q.newcomer.toLowerCase()) continue
+      quests.delete(courierKey)
+      saveQuests()
+      console.log(`[${agent.nick}] quest complete (escort): ${q.courier} welcomed ${q.newcomer}`)
+      setTimeout(() => {
+        client.sendMessage(ch, `⭐⭐ ${q.newcomer} was greeted by ${q.courier} — and answered. a stranger is a stranger only once; the channel bore witness.`)
+        client.sendMessage(q.courier, `quest complete, ${q.courier}. ⭐⭐ you made ${q.newcomer} welcome. say "quest" whenever you want another run.`)
+      }, 700)
+      return
     }
 
     // quest completion: the right courier says the right phrase in the right room

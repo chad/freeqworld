@@ -1063,6 +1063,7 @@ export class App {
       ['courier', 'Courier run', 'Carry a sealed phrase to another channel and say it aloud. Quiet rooms pay double.'],
       ['survey', 'Survey', 'Visit a room nobody has charted and report what you find.'],
       ['rekindle', 'Rekindle', 'Speak first in a room that has been silent for over a day.'],
+      ['escort', 'Escort', 'Greet a newcomer by name and draw a reply out of them. Pays double.'],
     ]
     rows.push('<div style="border-top:1px solid var(--border);padding-top:6px">')
     for (const [id, label, desc] of offers) {
