@@ -237,7 +237,9 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
         // the real app, with this person's OpenGraph tags injected: crawlers
         // read the tags, humans land straight in the app (no interstitial)
         const index = await readFile(join(PFP_DIST, 'index.html'), 'utf8')
-        const html = await appPageWithOg(id, base, index)
+        const html = await appPageWithOg(id, base, index, {
+          basePath: path.startsWith('/id/') ? '/id/' : '/',
+        })
         res.writeHead(200, {
           'content-type': 'text/html; charset=utf-8',
           'cache-control': 'no-cache, must-revalidate',

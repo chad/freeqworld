@@ -113,7 +113,9 @@ const esc = (s: string): string =>
  *  is compiled into the Rust broker (docs/DEPLOYMENT.md). A path-based URL would
  *  silently break one-tap avatar writes.
  */
-export async function appPageWithOg(id: Identity, origin: string, indexHtml: string): Promise<string> {
+export async function appPageWithOg(
+  id: Identity, origin: string, indexHtml: string, opts: { basePath?: string } = {},
+): Promise<string> {
   const canEncode = (await ffmpeg()) !== null
   const minted = await mintChiptune(id.did, 16)
   const c = Object.fromEntries(minted.card)
@@ -160,8 +162,16 @@ ${video}
 <meta name="twitter:description" content="${esc(desc)}" />
 <meta name="twitter:image" content="${esc(card)}" />`
 
+  // There is ONE pfp build (base '/id/', for world.freeq.at) but two hosts serve
+  // it: on pfp.freeq.at the app is at the root, so '/id/assets/...' 404s into the
+  // SPA fallback and the browser refuses the HTML as a module script. Rewrite the
+  // asset base to match wherever this page is actually being served from.
+  const rebased = (opts.basePath ?? '/id/') === '/id/'
+    ? indexHtml
+    : indexHtml.replace(/(src|href)="\/id\//g, '$1="/')
+
   // strip the build's own title + og/twitter/description tags, then inject ours
-  const stripped = indexHtml
+  const stripped = rebased
     .replace(/<title>[\s\S]*?<\/title>/i, '')
     .replace(/[ \t]*<meta (property="og:[^"]*"|name="(twitter:[^"]*|description)")[^>]*>\n?/gi, '')
   return stripped.replace(/<\/head>/i, `${tags}\n</head>`)

@@ -66,3 +66,21 @@ describe('clip', () => {
     expect(mp4.length).toBeGreaterThan(50_000)
   }, 60_000)
 })
+
+describe('asset base', () => {
+  const INDEX_ID = '<html><head><title>x</title></head><body>' +
+    '<script type="module" crossorigin src="/id/assets/index-abc.js"></script>' +
+    '<link rel="stylesheet" href="/id/assets/index-abc.css"></body></html>'
+
+  it('rewrites the asset base when served at the root (pfp.freeq.at)', async () => {
+    const html = await appPageWithOg(ID, 'https://pfp.freeq.at', INDEX_ID, { basePath: '/' })
+    expect(html).toContain('src="/assets/index-abc.js"')
+    expect(html).toContain('href="/assets/index-abc.css"')
+    expect(html).not.toContain('/id/assets/')
+  })
+
+  it('leaves it alone under /id/ (world.freeq.at)', async () => {
+    const html = await appPageWithOg(ID, 'https://pfp.freeq.at', INDEX_ID, { basePath: '/id/' })
+    expect(html).toContain('src="/id/assets/index-abc.js"')
+  })
+})
