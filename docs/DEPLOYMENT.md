@@ -1,4 +1,6 @@
 # How this is actually deployed
+> Deploy discipline (one deployer, never from a dirty tree, both pfp targets
+> together, push before restarting the NPCs): see **AGENTS.md**.
 
 Read this before touching production. The topology has one genuine trap
 (the auth broker) that has already burned us once.
