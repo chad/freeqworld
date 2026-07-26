@@ -6,7 +6,13 @@ name = "freeqworld"
 [build]
 onbuild = [
   "npx vite build client",
+  # TWO pfp builds, because two hosts serve it and vite's asset hashes differ
+  # per base: pfp/dist (base /id/) for world.freeq.at/id, and pfp/dist-root
+  # (base /) for the pfp.freeq.at vhost. The share routes inject OpenGraph tags
+  # into whichever index.html matches the requesting path, so the asset URLs it
+  # points at have to be the ones that host actually serves.
   "npx vite build pfp",
+  "npx vite build pfp --base=/ --outDir=dist-root",
 ]
 
 # FIMP_START makes server/src/main.ts boot the towns when it isn't argv[1].

@@ -14,6 +14,8 @@ import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
 const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
+/** The same app built with base '/' — what the pfp.freeq.at vhost serves. */
+const PFP_DIST_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist-root')
 
 /** Media responses with byte-range support.
  *
@@ -236,10 +238,18 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
       if (kind === 'u') {
         // the real app, with this person's OpenGraph tags injected: crawlers
         // read the tags, humans land straight in the app (no interstitial)
-        const index = await readFile(join(PFP_DIST, 'index.html'), 'utf8')
-        const html = await appPageWithOg(id, base, index, {
-          basePath: path.startsWith('/id/') ? '/id/' : '/',
-        })
+        // Serve the index.html belonging to the build THIS host serves: the
+        // two bases produce different asset hashes, so injecting the wrong one
+        // points the browser at a bundle that doesn't exist there.
+        const atIdBase = path.startsWith('/id/')
+        let index: string
+        try {
+          index = await readFile(join(atIdBase ? PFP_DIST : PFP_DIST_ROOT, 'index.html'), 'utf8')
+        } catch {
+          // older image without the second build: fall back and rewrite paths
+          index = await readFile(join(PFP_DIST, 'index.html'), 'utf8')
+        }
+        const html = await appPageWithOg(id, base, index, { basePath: atIdBase ? '/id/' : '/' })
         res.writeHead(200, {
           'content-type': 'text/html; charset=utf-8',
           'cache-control': 'no-cache, must-revalidate',
