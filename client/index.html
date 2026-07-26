@@ -173,7 +173,25 @@
         <button id="mode-chat" data-testid="mode-chat" title="Conventional chat client">Chat</button>
         <button id="mode-dev" data-testid="mode-dev" title="Protocol inspector">Dev</button>
       </span>
-      <button id="sound-btn" title="Toggle chiptune soundtrack" style="min-width:64px; text-align:center">♪ off</button>
+      <span id="sound-wrap" style="position:relative">
+        <button id="sound-btn" title="Toggle chiptune soundtrack" style="min-width:64px; text-align:center">♪ off</button>
+        <button id="sound-more" title="Sound levels: music, identity motifs, effects" style="padding:2px 6px">▾</button>
+        <!-- spec §26: mute all, mute music, mute effects and mute identity
+             motifs separately -->
+        <div id="sound-panel" class="hidden" style="position:absolute; right:0; top:110%; z-index:40;
+             background:var(--panel,#14141f); border:1px solid var(--border,#2c2c40); border-radius:8px;
+             padding:10px 12px; width:210px; font-size:.78rem; color:var(--dim,#8a8896)">
+          <label style="display:block; margin-bottom:8px">room music
+            <input id="vol-music" type="range" min="0" max="1" step="0.05" style="width:100%" />
+          </label>
+          <label style="display:block; margin-bottom:8px">identity motifs
+            <input id="vol-motifs" type="range" min="0" max="1" step="0.05" style="width:100%" />
+          </label>
+          <label style="display:block">effects
+            <input id="vol-effects" type="range" min="0" max="1" step="0.05" style="width:100%" />
+          </label>
+        </div>
+      </span>
     </header>
     <main>
       <div id="worldwrap">

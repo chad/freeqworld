@@ -1,32 +1,83 @@
-// Chiptune engine (spec §11): all sound is synthesized with the Web Audio
-// API — no streamed assets. A base loop per room, layers gated by the shared
-// MusicState, personal leitmotifs quoted on arrival, per-DID speech blips.
+// The world's sound (spec §11), on the shared chiptune engine in music/.
+//
+// This file is now a thin adapter: the engine (music/src/room.ts) owns the
+// layered bed, the identity quotes and the budget that keeps them from becoming
+// a doorbell. Keeping the old public surface (setRoom / setState / speechBlip /
+// playLeitmotif / playEnsemble / stinger / toggle) means every call site in
+// app.ts keeps working, and the room you walk into is now the same music you
+// auditioned on pfp.freeq.at.
+//
+// What you hear, and when:
+//   own theme in full   arriving in the world (2–4 bars, then the room takes over)
+//   own motif           when you're alone in a room, as the room's melody
+//   others' motifs      arrival (quiet, on the bar, budgeted) · opening their
+//                       card (louder) · when they @mention you (their motif IS
+//                       the notification)
+//   speech              a blip tinted by their motif — never the motif itself
+//                       (spec §30.5: avoid constant reaction sounds)
 
 import type { MusicState } from '../../shared/src/music'
 import { deriveLeitmotif } from '../../shared/src/leitmotif'
+import { RoomMusic } from '../../music/src/room.ts'
+import { themeForCue } from '../../music/src/themes.ts'
+import { midiToFreq } from '../../music/src/theory.ts'
 
-type Wave = OscillatorType
+export interface AudioPrefs {
+  music: number
+  motifs: number
+  effects: number
+}
 
-const MINOR = [0, 2, 3, 5, 7, 8, 10]
-const MAJOR = [0, 2, 4, 5, 7, 9, 11]
+const PREFS_KEY = 'fimp-audio-prefs'
+const DEFAULT_PREFS: AudioPrefs = { music: 0.5, motifs: 0.75, effects: 0.6 }
 
 export class ChiptuneEngine {
-  private ctx: AudioContext | null = null
-  private master: GainNode | null = null
-  private timer: number | null = null
-  private nextBeat = 0
-  private beatIndex = 0
-  private bpm = 108
-  private root = 45 // A2
+  private engine: RoomMusic | null = null
   private state: MusicState | null = null
+  private cue = 'plaza_108bpm'
+  private bpm = 108
+  private channel = '#plaza'
   private _muted = true
+  private identityDid: string | null = null
+  private prefs: AudioPrefs = { ...DEFAULT_PREFS }
+
+  constructor() {
+    try {
+      const saved = localStorage.getItem(PREFS_KEY)
+      if (saved) this.prefs = { ...DEFAULT_PREFS, ...(JSON.parse(saved) as Partial<AudioPrefs>) }
+    } catch {
+      /* defaults are fine */
+    }
+  }
 
   get muted(): boolean {
     return this._muted
   }
 
-  status(): { muted: boolean; ctxState: string; scheduling: boolean } {
-    return { muted: this._muted, ctxState: this.ctx?.state ?? 'none', scheduling: this.timer != null }
+  status(): { muted: boolean; ctxState: string; scheduling: boolean; prefs: AudioPrefs; cue: string } {
+    return {
+      muted: this._muted,
+      ctxState: this.engine?.ctx.state ?? 'none',
+      scheduling: this.engine?.position !== null && this.engine?.position !== undefined,
+      prefs: this.prefs,
+      cue: this.cue,
+    }
+  }
+
+  /** Separate music / motif / effects levels (spec §26 accessibility). */
+  setPrefs(next: Partial<AudioPrefs>): AudioPrefs {
+    this.prefs = { ...this.prefs, ...next }
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs))
+    } catch {
+      /* private mode: preferences just won't persist */
+    }
+    this.engine?.setVolumes(this.prefs)
+    return this.prefs
+  }
+
+  getPrefs(): AudioPrefs {
+    return { ...this.prefs }
   }
 
   toggle(): boolean {
@@ -35,164 +86,91 @@ export class ChiptuneEngine {
     return this._muted
   }
 
-  setRoom(bpm: number, channel: string): void {
-    this.bpm = bpm
-    // deterministic root per room name so each room has its own key
-    let h = 0
-    for (const c of channel) h = (h * 31 + c.charCodeAt(0)) | 0
-    this.root = 40 + (Math.abs(h) % 10)
-  }
-
-  setState(state: MusicState): void {
-    this.state = state
-  }
-
-  private ensureCtx(): AudioContext {
-    if (!this.ctx) {
-      this.ctx = new AudioContext()
-      this.master = this.ctx.createGain()
-      this.master.gain.value = 0.14 // restrained default volume (spec §30.5)
-      this.master.connect(this.ctx.destination)
-    }
-    return this.ctx
-  }
-
+  /** Call from a click handler: iOS only unlocks audio inside a gesture. */
   start(): void {
-    const ctx = this.ensureCtx()
-    void ctx.resume()
+    if (!this.engine) this.engine = new RoomMusic(undefined, { bars: 16 })
+    this.engine.unlock() // synchronous, inside the gesture
+    this.engine.setVolumes(this.prefs)
+    this.engine.setIdentity(this.identityDid)
     this._muted = false
-    if (this.timer == null) {
-      this.nextBeat = ctx.currentTime + 0.05
-      this.timer = window.setInterval(() => this.schedule(), 60)
-    }
+    if (this.state) this.engine.setMusicState(this.state)
+    this.engine.enterRoom(themeForCue(this.cue, this.bpm, this.channel))
   }
 
   stop(): void {
     this._muted = true
-    if (this.timer != null) {
-      clearInterval(this.timer)
-      this.timer = null
-    }
-    void this.ctx?.suspend()
+    this.engine?.stop()
   }
 
-  private schedule(): void {
-    const ctx = this.ctx
-    if (!ctx || this._muted) return
-    const s = this.state
-    const energy = s?.energy ?? 0.2
-    const tension = s?.tension ?? 0.1
-    const density = s?.density ?? 0.2
-    const brightness = s?.brightness ?? 0.5
-    // tempo modulates smoothly within a bounded range (spec §11.3)
-    const bpm = this.bpm * (0.95 + energy * 0.1)
-    const beat = 60 / bpm
-    const scale = tension > 0.45 ? MINOR : brightness > 0.6 ? MAJOR : MINOR
-    while (this.nextBeat < ctx.currentTime + 0.15) {
-      const t = this.nextBeat
-      const i = this.beatIndex
-      // bass: root movement i ii v i
-      const prog = [0, 0, 3, 0, 4, 4, 3, 0]
-      const bassDeg = prog[Math.floor(i / 2) % 8]!
-      if (i % 2 === 0) this.note(t, this.root + scale[bassDeg % 7]!, beat * 0.9, 'triangle', 0.9)
-      // lead arpeggio when the room is dense enough
-      if (density > 0.25 || energy > 0.4) {
-        const arp = [0, 2, 4, 6]
-        const deg = arp[i % 4]! + bassDeg
-        this.note(t, this.root + 24 + scale[deg % 7]! + 12 * Math.floor(deg / 7), beat * 0.45, brightness > 0.55 ? 'square' : 'sawtooth', 0.35)
-      }
-      // noise hat
-      if (energy > 0.15 && i % 2 === 1) this.hat(t, 0.04 + density * 0.05)
-      // tension ornament: flat second sting
-      if (tension > 0.6 && i % 8 === 7) this.note(t, this.root + 13, beat * 0.3, 'square', 0.3)
-      this.nextBeat += beat / 2 // 8th grid
-      this.beatIndex++
-    }
+  setState(state: MusicState): void {
+    this.state = state
+    if (!this._muted) this.engine?.setMusicState(state)
   }
 
-  private note(t: number, midi: number, dur: number, wave: Wave, vel: number): void {
-    const ctx = this.ctx!
-    const osc = ctx.createOscillator()
-    const gain = ctx.createGain()
-    osc.type = wave
-    osc.frequency.value = 440 * Math.pow(2, (midi - 69) / 12)
-    gain.gain.setValueAtTime(0.0001, t)
-    gain.gain.linearRampToValueAtTime(vel * 0.5, t + 0.01)
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur)
-    osc.connect(gain).connect(this.master!)
-    osc.start(t)
-    osc.stop(t + dur + 0.05)
+  /** Room change. `cue` is the world's `music.base_cue` (spec §11.7). */
+  setRoom(bpm: number, channel: string, cue?: string): void {
+    this.bpm = bpm
+    this.channel = channel
+    if (cue) this.cue = cue
+    if (this._muted || !this.engine) return
+    this.engine.enterRoom(themeForCue(this.cue, bpm, channel))
   }
 
-  private hat(t: number, vel: number): void {
-    const ctx = this.ctx!
-    const len = 0.04
-    const buffer = ctx.createBuffer(1, ctx.sampleRate * len, ctx.sampleRate)
-    const data = buffer.getChannelData(0)
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length)
-    const src = ctx.createBufferSource()
-    src.buffer = buffer
-    const gain = ctx.createGain()
-    gain.gain.value = vel
-    const filter = ctx.createBiquadFilter()
-    filter.type = 'highpass'
-    filter.frequency.value = 6000
-    src.connect(filter).connect(gain).connect(this.master!)
-    src.start(t)
+  /** Who I am — decides whose motif carries the room when it's empty. */
+  setIdentity(did: string | null): void {
+    this.identityDid = did
+    this.engine?.setIdentity(did)
   }
 
-  /** Quote a participant's leitmotif on arrival (spec §11.2 identity layer). */
-  async playLeitmotif(did: string): Promise<void> {
-    if (this._muted || !this.ctx) return
-    const motif = await deriveLeitmotif(did)
-    const wave: Wave = motif.instrument === 'triangle' ? 'triangle' : motif.instrument === 'fmbell' ? 'sine' : 'square'
-    let t = this.ctx.currentTime + 0.05
-    for (let i = 0; i < motif.notes.length; i++) {
-      const dur = motif.rhythmic_cell[i]! * 0.16
-      this.note(t, motif.notes[i]!, dur, wave, 0.5)
-      t += dur
-    }
+  setPopulation(n: number): void {
+    this.engine?.setPopulation(n)
   }
 
-  /** People standing together harmonize: their motifs interleave as a tiny ensemble. */
+  /** Your own tune, in full: the moment you arrive in the world. */
+  async playOwnTheme(did: string): Promise<void> {
+    if (this._muted || !this.engine) return
+    await this.engine.ownTheme(did, 4)
+  }
+
+  /** Quote a participant's leitmotif (spec §11.3 identity layer). */
+  async playLeitmotif(did: string, reason: 'arrival' | 'inspect' | 'mention' = 'arrival'): Promise<void> {
+    if (this._muted || !this.engine) return
+    await this.engine.quote(did, reason)
+  }
+
+  /** People standing together harmonise, in the room's key. */
   async playEnsemble(dids: string[]): Promise<void> {
-    if (this._muted || !this.ctx || dids.length < 2) return
-    const motifs = await Promise.all(dids.slice(0, 4).map((d) => deriveLeitmotif(d)))
-    let start = this.ctx.currentTime + 0.1
-    motifs.forEach((motif, voice) => {
-      const wave: Wave = motif.instrument === 'triangle' ? 'triangle' : motif.instrument === 'fmbell' ? 'sine' : 'square'
-      let t = start + voice * 0.22 // canon-style staggered entries
-      for (let i = 0; i < motif.notes.length; i++) {
-        const dur = motif.rhythmic_cell[i]! * 0.2
-        this.note(t, motif.notes[i]! + (voice === 1 ? 12 : voice === 2 ? -12 : 0), dur, wave, 0.3)
-        t += dur
-      }
-    })
-    void start
+    if (this._muted || !this.engine) return
+    await this.engine.ensemble(dids)
   }
 
-  /** Per-DID speech blip (spec §6.5 voice glyph). */
+  /** Per-DID speech blip (spec §6.5 voice glyph).
+   *
+   *  Tinted by the speaker's leitmotif — its first note and its instrument — so
+   *  a voice and its theme are audibly the same person, without replaying the
+   *  motif on every line. */
   speechBlip(did: string): void {
-    if (this._muted || !this.ctx) return
-    let h = 0
-    for (const c of did) h = (h * 33 + c.charCodeAt(0)) | 0
-    const freq = 300 + (Math.abs(h) % 480)
-    const t = this.ctx.currentTime
-    const osc = this.ctx.createOscillator()
-    const gain = this.ctx.createGain()
-    osc.type = 'square'
-    osc.frequency.setValueAtTime(freq, t)
-    osc.frequency.linearRampToValueAtTime(freq * 1.3, t + 0.05)
-    gain.gain.setValueAtTime(0.12, t)
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08)
-    osc.connect(gain).connect(this.master!)
-    osc.start(t)
-    osc.stop(t + 0.1)
+    if (this._muted || !this.engine) return
+    const ctx = this.engine.ctx
+    void deriveLeitmotif(did).then((motif) => {
+      const t = ctx.currentTime
+      const freq = midiToFreq((motif.notes[0] ?? 72) + 12)
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = motif.instrument === 'triangle' ? 'triangle' : motif.instrument === 'fmbell' ? 'sine' : 'square'
+      osc.frequency.setValueAtTime(freq, t)
+      osc.frequency.linearRampToValueAtTime(freq * 1.28, t + 0.05)
+      gain.gain.setValueAtTime(0.16, t)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09)
+      osc.connect(gain).connect(this.engine!.effectsBus)
+      osc.start(t)
+      osc.stop(t + 0.11)
+    })
   }
 
   stinger(kind: 'door' | 'mention' | 'lock' | 'portal' | 'spark' | 'jump'): void {
-    if (this._muted || !this.ctx) return
-    const t = this.ctx.currentTime
+    if (this._muted || !this.engine) return
+    const ctx = this.engine.ctx
     const seqs: Record<string, number[]> = {
       door: [72, 79],
       mention: [84, 88, 91],
@@ -201,10 +179,27 @@ export class ChiptuneEngine {
       spark: [76, 83, 88, 95],
       jump: [67, 79],
     }
-    let time = t
+    let t = ctx.currentTime
     for (const midi of seqs[kind]!) {
-      this.note(time, midi, 0.1, 'square', 0.4)
-      time += 0.07
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'square'
+      osc.frequency.value = midiToFreq(midi)
+      gain.gain.setValueAtTime(0.0001, t)
+      gain.gain.linearRampToValueAtTime(0.32, t + 0.01)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.1)
+      osc.connect(gain).connect(this.engine.effectsBus)
+      osc.start(t)
+      osc.stop(t + 0.15)
+      t += 0.07
     }
+  }
+
+  /** Somebody called your name: their motif is the notification, so you learn
+   *  who wants you without reading anything. */
+  async mentionStinger(did: string): Promise<void> {
+    if (this._muted || !this.engine) return
+    const quoted = await this.engine.quote(did, 'mention')
+    if (!quoted) this.stinger('mention') // budget said no: fall back to the plain cue
   }
 }

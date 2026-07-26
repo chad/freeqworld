@@ -199,13 +199,46 @@ web/demo.ts         demo page
 the odd-meter insert, channel monophony, loudness/clip-free rendering, seamless
 looping, WAV headers, and per-DID minting.
 
+## In the world (`src/room.ts`)
+
+The room owns the music; identity enters it as a **quote**. Twenty people in a
+room can't each play their own tune — that's not a soundtrack, it's a crowd of
+ringtones. So:
+
+| you hear | when |
+|---|---|
+| **your theme, in full** | arriving in the world (4 bars, then it hands over), and on pfp.freeq.at |
+| **your own motif** | when you're alone in a room — your motif becomes the melody, and the room's own lead ducks under it |
+| **someone else's motif** | they arrive (quiet, on the bar, budgeted) · you open their card (louder — you asked) · they @mention you (their motif *is* the notification, so you know who wants you without reading) |
+| **nobody's motif** | on every chat line. That's the speech blip — tinted by their leitmotif's first note and instrument, but never the motif itself (§30.5: "avoid constant reaction sounds") |
+
+How it stays musical rather than becoming a doorbell:
+
+- **Four stems, one render.** The bed is composed once and rendered as
+  base / rhythm / lead / texture buffers played in sync (§11.3's layers). The
+  server's `MusicState` moves their gains, so the room breathes with activity
+  without ever re-rendering or losing the loop point. Drums fade in with energy;
+  an empty room has no backbeat.
+- **Quotes land on the bar line**, computed from the bed's own audio clock —
+  deliberate actions (mention, inspect) answer on the next *beat* so they feel
+  connected to the click.
+- **Quotes are re-keyed** into the room's scale and register, contour preserved,
+  and the lead stem ducks under them.
+- **A budget** (`MotifBudget`): 45 s per-person cooldown, a 2.5 s global gap, and
+  no arrival quotes at all in a room of more than eight. Deliberate actions
+  bypass the crowd rule, because silence in response to a click reads as a bug.
+- Separate **music / motifs / effects** levels, persisted (§26).
+
+All fourteen `RoomTemplate`s the live world can classify a channel into resolve
+to an authored cue (`themeForCue`), and anything new still gets deterministic
+music derived from its cue name rather than silence.
+
 ## Next
 
-- Fold `client/src/audio.ts` (the world client's older 210-line oscillator
-  engine) onto this one, so the room you walk into and the tune you auditioned
-  on pfp are the same sound.
-- Adaptation rules from §11.6 (layers fading with room activity, topic tint) —
-  `shared/src/music.ts` already computes the `MusicState` to drive them.
+- Topic tint: `shared/src/music.ts` already classifies conversation into a
+  topic family; the bed could shift mode/brightness with it (§11.4).
+- Agent layer (§11.3 layer 4): motifs for active bots, distinct from people.
+- Event stingers for federation and encryption changes (§11.3 layer 6).
 - Transition/stinger scheduling so room changes land on a bar line.
 - Publish minted themes as a `freeq.at/profile/chiptune/v1` record and quote a
   joining user's motif inside the room cue (§11.3, §11.5).

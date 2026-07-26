@@ -89,6 +89,8 @@ function el<T extends HTMLElement>(id: string): T {
 
 export class App {
   private identity: Identity | null = null
+  /** your own theme plays once per session, on arrival */
+  private playedOwnTheme = false
   private conn: TownConnection | FreeqBackend | null = null
   private town: TownProfile | null = null
   private rooms = new Map<string, RoomManifest>()
@@ -358,7 +360,7 @@ export class App {
     )
     this.log = [...history]
     this.vaultPlain.clear()
-    this.audio.setRoom(room.music.bpm, channel)
+    this.audio.setRoom(room.music.bpm, channel, room.music.base_cue)
     document.querySelector('[data-testid="header-loc"]')!.textContent = `${this.town?.name ?? '—'} · ${room.name} · ${channel}`
     document.querySelector('[data-testid="header-topic"]')!.textContent = room.topic
     this.renderTranscript()
@@ -456,7 +458,7 @@ export class App {
       } else if (live) {
         this.addBubbleFor(msg.sender, msg.content, msg.type === 'code' ? 'code' : 'text')
         this.audio.speechBlip(msg.sender)
-        if (this.identity && this.mentionsMe(msg.content)) this.audio.stinger('mention')
+        if (this.identity && this.mentionsMe(msg.content)) void this.audio.mentionStinger(msg.sender)
         // rekindling: our own message breaking >24h of silence in this room
         if (this.identity && msg.sender === this.identity.did) {
           const prior = this.log.filter((e) => e.kind === 'message' && e.event.id !== msg.id)
@@ -515,7 +517,7 @@ export class App {
       this.members.set(member.did, member)
       if (isNew && !silent) {
         this.transcriptSystem(`${member.display_name} arrived`)
-        void this.audio.playLeitmotif(member.avatar_did ?? member.did)
+        void this.audio.playLeitmotif(member.avatar_did ?? member.did, 'arrival')
         // arrival puff at wherever they materialize
         this.emotes.push({ did: member.did, emoji: '✧', until: performance.now() + 1400 })
       }
@@ -663,6 +665,9 @@ export class App {
   }
 
   private renderMembers(): void {
+    // the engine needs the room's population: it stops quoting arrivals in a
+    // crowd, and when you're the only one here your own motif carries the room
+    this.audio.setPopulation(this.members.size)
     // we are standing in this channel: its live roster is ground truth, better
     // than a stale (or hidden) LIST count — keep the directory honest
     const entry = this.town?.directory?.find((e) => e.channel === this.channel)
@@ -861,11 +866,38 @@ export class App {
       localStorage.setItem('fimp-sound', muted ? 'off' : 'on')
       el('sound-btn').textContent = muted ? '♪ off' : '♪ on'
     })
+    // separate levels for music, identity motifs and effects (spec §26)
+    el('sound-more').addEventListener('click', (e) => {
+      e.stopPropagation()
+      el('sound-panel').classList.toggle('hidden')
+      const prefs = this.audio.getPrefs()
+      for (const [k, v] of Object.entries(prefs)) {
+        const input = document.getElementById(`vol-${k}`) as HTMLInputElement | null
+        if (input) input.value = String(v)
+      }
+    })
+    for (const k of ['music', 'motifs', 'effects'] as const) {
+      el(`vol-${k}`).addEventListener('input', (e) => {
+        this.audio.setPrefs({ [k]: Number((e.target as HTMLInputElement).value) })
+      })
+    }
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('sound-wrap')
+      if (wrap && !wrap.contains(e.target as Node)) el('sound-panel').classList.add('hidden')
+    })
     // audio needs a user gesture: start on the first one unless the user muted last time
     const autoStart = () => {
       if (localStorage.getItem('fimp-sound') !== 'off' && this.audio.muted) {
-        this.audio.start()
+        this.audio.start() // unlocks audio inside the gesture (iOS)
         el('sound-btn').textContent = '♪ on'
+        // arriving in the world is the one place you hear your OWN tune in full:
+        // it plays over the room for a few bars and then hands over (spec §5.2,
+        // "a brief identity leitmotif plays")
+        if (this.identity && !this.playedOwnTheme) {
+          this.playedOwnTheme = true
+          this.audio.setIdentity(this.identity.did)
+          void this.audio.playOwnTheme(this.identity.did)
+        }
       }
     }
     window.addEventListener('pointerdown', autoStart, { once: true })
@@ -2255,7 +2287,7 @@ export class App {
     })
     // the music box: every soul you've met carries a tune
     for (const card of grid.querySelectorAll<HTMLElement>('.spark-card')) {
-      card.addEventListener('click', () => void this.audio.playLeitmotif(card.dataset.did!))
+      card.addEventListener('click', () => void this.audio.playLeitmotif(card.dataset.did!, 'inspect'))
     }
     // journal page: stamps + deeds
     const stamps = this.journal.stamps()
