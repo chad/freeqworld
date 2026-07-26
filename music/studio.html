@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FreeqWorld · chiptune studio</title>
+    <style>
+      :root { color-scheme: dark; --bg:#08080f; --panel:#11111e; --line:#23233a; --dim:#7c7c93; --gold:#ffd166; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 28px 20px 60px; background: var(--bg); color: #e8e6df;
+        font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      main { max-width: 1000px; margin: 0 auto; }
+      h1 { font-size: 19px; letter-spacing: .09em; text-transform: uppercase; margin: 0 0 3px; }
+      p.sub { color: var(--dim); margin: 0 0 24px; }
+      p.sub a { color: var(--gold); }
+      h2 { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim);
+           margin: 26px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+      button {
+        font: inherit; background: #1a1a2e; color: #e8e6df; border: 1px solid var(--line);
+        padding: 7px 13px; cursor: pointer; border-radius: 3px;
+      }
+      button:hover:not(:disabled) { border-color: var(--gold); }
+      button:disabled { opacity: .45; cursor: default; }
+      button.primary { background: var(--gold); color: #08080f; border-color: var(--gold); font-weight: 600; }
+      button.tiny { padding: 3px 8px; font-size: 12px; }
+      input, textarea {
+        font: inherit; background: #0b0b14; color: #e8e6df; border: 1px solid var(--line);
+        padding: 8px 10px; border-radius: 3px;
+      }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      #handle { flex: 1; min-width: 260px; }
+      .sugg { margin-top: 10px; color: var(--dim); }
+      .sugg button { padding: 3px 9px; font-size: 12px; margin-right: 6px; background: transparent; }
+
+      .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 16px; }
+      .who { display: flex; gap: 14px; align-items: center; }
+      .who img { width: 56px; height: 56px; border-radius: 50%; background: #23233a; }
+      .who .name { font-size: 16px; }
+      .who .did { color: var(--dim); font-size: 12px; word-break: break-all; }
+      #card { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+      .chip { background: #0b0b14; border: 1px solid var(--line); border-radius: 3px; padding: 4px 9px; }
+      .chip i { color: var(--dim); font-style: normal; margin-right: 8px; }
+      .chip.hero { border-color: var(--gold); color: var(--gold); }
+      canvas { width: 100%; height: 190px; display: block; border: 1px solid var(--line);
+               border-radius: 3px; margin-top: 14px; background: #0b0b14; }
+      .transport { margin-top: 14px; }
+      .legend { color: var(--dim); font-size: 12px; margin-top: 8px; }
+      .legend b { display: inline-block; width: 8px; height: 8px; margin: 0 5px 0 12px; }
+      .legend b:first-child { margin-left: 0; }
+
+      table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+      th { text-align: left; font-weight: 400; color: var(--dim); font-size: 11px;
+           text-transform: uppercase; letter-spacing: .1em; padding: 6px 8px; }
+      td { border-top: 1px solid var(--line); padding: 7px 8px; vertical-align: middle; }
+      tr.playing td { background: #16162a; }
+      td.h { color: var(--gold); cursor: pointer; }
+      td.desc { color: var(--dim); font-size: 12px; }
+      .rate button { background: transparent; border-color: transparent; padding: 2px 5px; font-size: 15px; }
+      .rate button.on { background: #23233a; border-color: var(--line); }
+      td input { width: 100%; padding: 4px 7px; font-size: 12px; }
+      #status { margin-left: 4px; color: var(--dim); }
+      #status.err { color: #ef476f; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Chiptune studio</h1>
+      <p class="sub">
+        Type a Bluesky handle. It resolves to a DID, and the DID mints a tune —
+        deterministically, forever, no upload. <a href="./index.html">← room themes</a>
+      </p>
+
+      <div class="row">
+        <input id="handle" placeholder="alice.bsky.social  (or a raw did:plc:…)" spellcheck="false" />
+        <button id="mint" class="primary">♪ mint tune</button>
+        <span id="status"></span>
+      </div>
+      <div class="sugg" id="sugg">try:</div>
+
+      <section id="now" class="panel hidden" style="margin-top:18px">
+        <div class="who">
+          <img id="avatar" alt="" />
+          <div>
+            <div class="name"><span id="name"></span> <span style="color:var(--dim)">@<span id="hnd"></span></span></div>
+            <div class="did"><span id="did"></span> · seed <span id="seed"></span></div>
+          </div>
+        </div>
+        <div id="card"></div>
+        <canvas id="roll"></canvas>
+        <div class="legend">
+          <b style="background:#ffd166"></b>lead
+          <b style="background:#06d6a0"></b>harmony
+          <b style="background:#118ab2"></b>bass
+          <b style="background:#ef476f"></b>drums
+          <b style="background:#9b5de5"></b>kick
+          <span id="meta" style="margin-left:14px"></span>
+        </div>
+        <div class="row transport">
+          <button id="play">▶ play</button>
+          <button id="stop">■ stop</button>
+          <button id="sting">▸ arrival stinger only</button>
+          <button id="dl">⭳ wav</button>
+        </div>
+      </section>
+
+      <h2>Minted this session — click a handle to A/B them</h2>
+      <table id="list">
+        <thead>
+          <tr><th style="width:22%">handle</th><th style="width:40%">tune</th><th style="width:12%">rating</th><th>note</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+
+      <div class="row" style="margin-top:14px">
+        <button id="copy">⧉ copy feedback</button>
+        <button id="clear">clear session</button>
+        <span id="copied" style="color:var(--dim)"></span>
+      </div>
+    </main>
+    <script type="module" src="./web/studio.ts"></script>
+  </body>
+</html>

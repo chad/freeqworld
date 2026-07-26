@@ -43,6 +43,12 @@ The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
   so this vhost has no backend. The **one-tap** path additionally calls the auth
   broker (below).
 
+  Since 2026-07-25 the reveal also **plays the visitor's theme tune** (the
+  chiptune engine in `music/`, bundled into the same JS — +22 kB gz, no audio
+  assets, no new network calls). Nothing about the deploy changes: rebuild and
+  rsync exactly as above. The engine's own demo pages (`music/index.html`,
+  `music/studio.html`) are dev-only and are NOT part of either build.
+
 ### One-tap avatar writes (broker `/api/pfp/set-avatar`)
 
 The PFP “continue with Bluesky” button uses OAuth via the broker, which then

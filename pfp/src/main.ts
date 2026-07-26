@@ -5,6 +5,7 @@
 import { generateKeypair, didFromPublicKey } from '../../shared/src/signing'
 import { renderPfp, traitSummary, canvasToPngBlob, canvasToPngBase64, type Variant } from './render'
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
+import { revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme } from './theme'
 import { startPfpOAuth, consumePfpOAuthReturn, setAvatarViaBroker, type PfpOAuthReturn } from './oauth'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
@@ -38,6 +39,8 @@ async function paint(): Promise<void> {
 
   $('did').textContent = short(currentDid)
   $('did').title = currentDid
+  // the same DID also derives a theme tune (silent until asked)
+  void revealTheme(currentDid)
   $('label').textContent = currentLabel
   $('traits').innerHTML = traitSummary(avatar)
     .map(([k, v]) => `<span class="trait"><b>${k}</b> ${v}</span>`)
@@ -61,6 +64,7 @@ async function generateFromHandle(): Promise<void> {
 }
 
 async function surpriseMe(): Promise<void> {
+  stopTheme() // a new identity gets a new tune
   const kp = generateKeypair()
   currentDid = didFromPublicKey(kp.publicKey)
   currentLabel = 'a fresh did:key identity'
@@ -102,6 +106,15 @@ function bind(): void {
     void surpriseMe()
   })
   $('download').addEventListener('click', () => void download())
+  $('hear').addEventListener('click', () => void toggleTheme())
+  $('theme-sting').addEventListener('click', (e) => {
+    e.preventDefault()
+    void playStinger()
+  })
+  $('theme-dl').addEventListener('click', (e) => {
+    e.preventDefault()
+    downloadTheme(currentLabel)
+  })
   for (const v of ['portrait', 'explorer'] as Variant[]) {
     $(`v-${v}`).addEventListener('click', () => {
       variant = v

@@ -159,6 +159,30 @@ PDS allows within the session.
 
 ---
 
+## Shipped addition: the theme tune (2026-07-25)
+
+The reveal now has a second half. The same DID that derives the face also mints
+a **chiptune** — key, tempo, mood, chord loop, bass/harmony/percussion styles,
+and the personal leitmotif as the melody's opening figure. It plays on demand
+(`▶ hear your theme`), never on page load, and can be downloaded as a `.wav`.
+
+- Engine: `music/` (see `music/README.md`). Pure TS, no dependencies, no audio
+  assets — the loop is synthesised in the browser at ~300 ms for 32 bars and
+  handed to Web Audio as an `AudioBuffer`. Adds ~22 kB gzipped to the bundle.
+- Adapter: `pfp/src/theme.ts` (mint + transport + reveal chips), wired into
+  `paint()` in `main.ts` so it follows whichever identity is on screen —
+  handle, "surprise me", or an authenticated OAuth DID.
+- Switching explorer/portrait does **not** restart the music (same DID, same
+  tune); a new identity stops it.
+- **One motif per identity.** `music/src/motif.ts` is an *adapter over*
+  `shared/src/leitmotif.ts`, not a second generator. The canonical derivation is
+  pinned by `fixtures/avatar-conformance.json` and shares the exact HKDF domain
+  (`salt="freeq-world-motif"`, `info="motif-v1"`), so re-deriving it here would
+  have given every DID two different "official" motifs — one in the world
+  client, another on pfp. The arrival stinger plays the canonical MIDI notes
+  literally; the minted tune snaps that same contour into its own key.
+- The share post now reads "Your identity has a face — and a theme tune."
+
 ## Build / serve / deploy
 
 - New source dir `pfp/` (or `client-id/`) with its own tiny `vite` build →

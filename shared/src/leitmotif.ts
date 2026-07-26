@@ -1,7 +1,7 @@
 // Deterministic personal leitmotifs (spec §11.5).
 // motif_seed = HKDF-SHA256(ikm=DID, salt="freeq-world-motif", info="motif-v1")
 
-import { hkdfSha256, pick, seededPrng } from './hkdf'
+import { hkdfSha256, pick, seededPrng } from './hkdf.ts'
 
 export interface Leitmotif {
   did: string

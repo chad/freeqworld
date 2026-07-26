@@ -3,7 +3,10 @@
   "compilerOptions": {
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"]
+    "types": ["node"],
+    // music/ uses explicit .ts specifiers so the CLI runs under bare `node`
+    // (Node 22+ type stripping) as well as through vite.
+    "allowImportingTsExtensions": true
   },
-  "include": ["shared/src", "server/src", "client/src", "pfp/src", "e2e", "*.ts"]
+  "include": ["shared/src", "server/src", "client/src", "pfp/src", "music/src", "music/web", "music/bin", "e2e", "*.ts"]
 }

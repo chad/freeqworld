@@ -120,7 +120,7 @@ export async function setAvatar(s: Session, avatar: BlobRef): Promise<void> {
 export async function postAboutIt(s: Session, image: BlobRef): Promise<void> {
   const enc = new TextEncoder()
   const url = 'pfp.freeq.at'
-  const text = `I'm now my FreeqWorld self ✦\n\nYour identity has a face — mine's derived from my DID: ${url}`
+  const text = `I'm now my FreeqWorld self ✦\n\nYour identity has a face — and a theme tune. Both derived from my DID: ${url}`
   const start = enc.encode(text.slice(0, text.indexOf(url))).length
   const end = start + enc.encode(url).length
   const record = {

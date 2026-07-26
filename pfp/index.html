@@ -4,9 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>FreeqWorld ID — your identity, as a face</title>
-  <meta name="description" content="See the deterministic pixel character your Bluesky identity derives into — the same face you'd walk around as in FreeqWorld. Nothing uploaded; derived from your DID." />
+  <meta name="description" content="See the deterministic pixel character your Bluesky identity derives into — and hear the chiptune it composes. The same face and theme you'd have in FreeqWorld. Nothing uploaded; derived from your DID." />
   <meta property="og:title" content="FreeqWorld ID" />
-  <meta property="og:description" content="Your identity, as a face. A deterministic pixel character derived from your DID — set it as your Bluesky avatar." />
+  <meta property="og:description" content="Your identity, as a face — and as a theme tune. A deterministic pixel character and chiptune derived from your DID. Set the face as your Bluesky avatar." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://pfp.freeq.at/" />
   <meta property="og:image" content="https://world.freeq.at/og.png" />
@@ -55,6 +55,14 @@
     .trait b { color:var(--ink); font-weight:600; }
     .actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
     .note { color:var(--dim); font-size:.82rem; text-align:center; max-width:46ch; line-height:1.5; margin-top:4px; }
+    .theme {
+      width:100%; border-top:1px solid var(--border); padding-top:14px; margin-top:2px;
+      display:flex; flex-direction:column; align-items:center; gap:9px;
+    }
+    .theme-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+    .theme-name { color:var(--green); font-size:.85rem; }
+    #hear.active { border-color:var(--green); color:var(--green); }
+    .theme .note a { cursor:pointer; }
     .foot { margin-top:26px; color:var(--dim); font-size:.85rem; text-align:center; }
     .toast {
       position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
@@ -107,6 +115,19 @@
         <button class="ghost" id="setbsky">set as Bluesky avatar →</button>
       </div>
       <div class="note">This isn't uploaded art — it's computed from your DID. It's the exact character you'd walk around as in FreeqWorld.</div>
+
+      <div class="theme hidden" id="theme">
+        <div class="theme-head">
+          <button class="ghost" id="hear">▶ hear your theme</button>
+          <span class="theme-name" id="theme-name"></span>
+        </div>
+        <div class="traits" id="theme-traits"></div>
+        <div class="note">
+          Your DID composes a chiptune too — a 3–5 note motif, a key, a tempo and a groove,
+          generated live in your browser. No audio is downloaded.
+          <a id="theme-sting">play just the motif</a> · <a id="theme-dl">download the loop</a>
+        </div>
+      </div>
     </div>
   </div>
 
