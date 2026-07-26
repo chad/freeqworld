@@ -34,3 +34,8 @@ export declare function deliveryOutcome(input: {
   text: string
 }): Outcome
 export declare function existingEnvelope(ledger: Ledger, nick: string, target: string): Held | null
+
+export declare function questCanonical(payload: Record<string, string>): string
+export declare function completionPayload(a: {
+  player: string; kind: string; channel: string; bonus?: boolean; ts?: number; witness: string
+}): Record<string, string>

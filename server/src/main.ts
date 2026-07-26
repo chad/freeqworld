@@ -14,6 +14,9 @@ import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
 const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
+const IRC_HTTP = process.env.FREEQ_HTTP ?? 'https://irc.freeq.at'
+/** brief cache so a room full of players doesn't hammer the events API */
+const xpCache = new Map<string, { events: unknown[]; at: number }>()
 /** The same app built with base '/' — what the pfp.freeq.at vhost serves. */
 const PFP_DIST_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist-root')
 
@@ -207,6 +210,41 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   }
   if (path === '/api/agents') {
     return json(town.getAgents().map((a) => a.member))
+  }
+
+  // --- the XP ledger --------------------------------------------------------
+  // freeq-server already stores every `+freeq.at/event` TAGMSG durably and
+  // serves it at /api/v1/channels/{name}/events — but with no CORS header, so a
+  // browser cannot read it. This proxies it same-origin and caches briefly.
+  //
+  // It is a TRANSPORT, not an authority: each completion carries the witness's
+  // ed25519 signature and the client verifies it (shared/src/xp.ts), so this
+  // route can omit events but cannot invent one. The raw log stays public:
+  //   curl 'https://irc.freeq.at/api/v1/channels/%23general/events?event_type=quest_complete'
+  if (path === '/api/xp' || path === '/id/api/xp') {
+    const chans = (url.searchParams.get('channels') ?? '#general,#lobby,#dev')
+      .split(',').map((c) => c.trim()).filter((c) => c.startsWith('#')).slice(0, 8)
+    const key = chans.join(',')
+    const hit = xpCache.get(key)
+    if (hit && Date.now() - hit.at < 30_000) return json({ events: hit.events, cached: true })
+    const events: unknown[] = []
+    await Promise.all(chans.map(async (ch) => {
+      try {
+        const r = await fetch(
+          `${IRC_HTTP}/api/v1/channels/${encodeURIComponent(ch)}/events` +
+            // the server names this param `type` (web.rs api_channel_events)
+            `?type=quest_complete&limit=500`,
+          { signal: AbortSignal.timeout(6000) },
+        )
+        if (!r.ok) return
+        const body = (await r.json()) as { events?: unknown[] }
+        for (const e of body.events ?? []) events.push(e)
+      } catch {
+        /* one unreachable channel must not empty the whole board */
+      }
+    }))
+    xpCache.set(key, { events, at: Date.now() })
+    return json({ events })
   }
 
   // --- shareable identity pages -------------------------------------------

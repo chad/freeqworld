@@ -200,6 +200,19 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
       capabilities: ['inspect', 'read', 'claim'],
       persistence: 'persistent',
     })
+    // Standing, made physical. Levels and boards are a computation over the
+    // signed completion log, so this obelisk shows a proof, not a score kept for
+    // you somewhere (see shared/src/xp.ts).
+    objects.push({
+      schema: 'freeq.at/world/object/v1',
+      id: 'obelisk',
+      type: 'monument',
+      position: [Math.max(2, Math.floor(width / 2) - 4), 4],
+      sprite: 'obelisk',
+      label: 'Obelisk of standing',
+      capabilities: ['inspect', 'read'],
+      persistence: 'persistent',
+    })
     // The room's memory, made physical: everything on this lectern is read out
     // of the channel's real CHATHISTORY, not decoration.
     if (Math.floor(width / 2) + 7 < width - 2) {

@@ -97,3 +97,31 @@ export function existingEnvelope(ledger, nick, target) {
   }
   return null
 }
+
+// --- witnessed completions, for the XP ledger -------------------------------
+//
+// The agent is the witness: it signs a completion naming the player, and emits
+// it as a `+freeq.at/event=quest_complete` TAGMSG. freeq-server stores those
+// durably (coordination_events) and serves them over HTTP, so levels and
+// leaderboards are a computation over a signed public log rather than a score
+// the server keeps. Plain IRC clients see nothing — TAGMSG only, and
+// deliberately NOT the SDK's emitEvent(), which also sends a companion PRIVMSG.
+
+/** JCS over a flat string map. Mirrored byte-for-byte in shared/src/xp.ts;
+ *  shared/src/xp.test.ts signs with this and verifies with that. */
+export function questCanonical(payload) {
+  const keys = Object.keys(payload).sort()
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${JSON.stringify(String(payload[k]))}`).join(',')}}`
+}
+
+/** The payload a witness signs. Flat strings only, so the canonical is stable. */
+export function completionPayload({ player, kind, channel, bonus, ts, witness }) {
+  return {
+    player: String(player),
+    kind: String(kind),
+    channel: String(channel),
+    bonus: bonus ? '1' : '0',
+    ts: String(ts ?? Math.floor(Date.now() / 1000)),
+    witness: String(witness),
+  }
+}

@@ -8,6 +8,8 @@ import { generateTilemap, isWalkable, roomFor, TILE, type Tilemap } from '../../
 import { seededPrng } from '../../shared/src/hkdf'
 import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
+import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
+import { LADDERS } from '../../shared/src/xp'
 import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, type Identity } from './identity'
 import { TownConnection } from './net'
@@ -780,8 +782,22 @@ export class App {
     }
   }
 
+
+  /** Whoever's card is open, show what they have actually done. */
+  private async paintCardStanding(did: string): Promise<void> {
+    const slot = document.getElementById('idcard-standing')
+    if (!slot) return
+    slot.textContent = '…'
+    const s2 = await standingFor(did)
+    const lv = levelFor(s2.xp)
+    slot.textContent = s2.runs
+      ? `Level ${lv.level} · ${lv.title} · ${s2.xp} XP · ${s2.runs} witnessed run${s2.runs === 1 ? '' : 's'}`
+      : `Level 1 · Wanderer · no witnessed work yet`
+  }
+
   private async showIdentityCard(did: string): Promise<void> {
     const m = this.members.get(did)
+    void this.paintCardStanding(did)
     el('idcard-name').textContent = m?.display_name ?? shortDid(did)
     el('idcard-display').textContent = m?.display_name ?? '—'
     el('idcard-handle').textContent = m?.handle ?? '—'
@@ -1155,6 +1171,8 @@ export class App {
     const body = el('obj-body')
     if (o.id === 'questboard') {
       this.renderQuestBoard(body)
+    } else if (o.id === 'obelisk') {
+      void this.renderObelisk(body)
     } else if (o.id === 'lectern') {
       this.renderLectern(body)
     } else if (o.id === 'directory' && this.town?.directory?.length) {
@@ -1182,6 +1200,64 @@ export class App {
   /** The work queue as furniture: your run in hand, the deeds you've done, and
    *  the runs you can take. Claiming DMs the Cartographer, who verifies
    *  delivery in the real channel — the quest is a real protocol action. */
+
+  /** The Obelisk of standing: levels and boards, computed from the signed
+   *  completion log and verified in this browser. Nothing here is a score the
+   *  server keeps for you — the numbers are a proof anyone can recompute. */
+  private async renderObelisk(body: HTMLElement): Promise<void> {
+    body.innerHTML = '<div style="color:var(--dim)">reading the signed ledger…</div>'
+    const [all, mine] = await Promise.all([board(), standingFor(this.identity?.did ?? null)])
+    const lv = levelFor(mine.xp)
+    const pct = lv.need ? Math.round((lv.into / lv.need) * 100) : 100
+    const nameFor = (did: string): string =>
+      this.members.get(did)?.display_name ?? shortDid(did)
+
+    const rows: string[] = []
+    rows.push(`
+      <div style="border:1px solid var(--amber);padding:8px;margin-bottom:10px">
+        <div style="color:var(--amber);font-weight:700">
+          Level ${lv.level} · ${lv.title}${mine.xp ? ` · ${mine.xp} XP` : ''}
+        </div>
+        <div style="height:6px;background:var(--panel2);border:1px solid var(--border);margin:6px 0">
+          <div style="height:100%;width:${pct}%;background:var(--amber)"></div>
+        </div>
+        <div style="color:var(--dim);font-size:.82rem">
+          ${lv.next
+            ? `${lv.into}/${lv.need} to level ${lv.next.level}${lv.unlock ? ` — unlocks ${escapeHtml(lv.unlock)}` : ''}`
+            : 'the top of the ladder'}
+        </div>
+        ${mine.runs
+          ? `<div style="color:var(--dim);font-size:.82rem;margin-top:4px">${mine.runs} witnessed run${mine.runs === 1 ? '' : 's'}</div>`
+          : `<div style="color:var(--dim);font-size:.82rem;margin-top:4px">No witnessed work yet — press E at the quest board.</div>`}
+      </div>`)
+
+    for (const l of LADDERS) {
+      const top = ladderBoard(all, l.id, 5)
+      if (!top.length) continue
+      rows.push(
+        `<div style="margin-bottom:8px"><div style="color:var(--cyan);font-size:.82rem">${l.label} — ${l.blurb}</div>` +
+          top.map((s2, i) => {
+            const me = this.identity && s2.player === this.identity.did
+            return `<div style="display:flex;gap:8px;font-size:.86rem${me ? ';color:var(--amber)' : ''}">` +
+              `<span style="color:var(--dim);width:1.4em">${i + 1}</span>` +
+              `<span style="flex:1">${escapeHtml(nameFor(s2.player))}</span>` +
+              `<span>${s2.byLadder[l.id]}</span></div>`
+          }).join('') +
+          '</div>',
+      )
+    }
+    if (all.length === 0) {
+      rows.push('<div style="color:var(--dim)">The ledger is empty. Every completed run is signed by its witness and appears here.</div>')
+    }
+    rows.push(
+      `<div style="color:var(--dim);font-size:.78rem;margin-top:8px;line-height:1.5">` +
+        `Levels are a pure function of witnessed work — no XP for talking, and repeats in the same room the same day pay less. ` +
+        `Each completion carries its witness's signature and was verified in this browser; the log itself is public: ` +
+        `<code>/api/v1/channels/%23general/events?event_type=quest_complete</code></div>`,
+    )
+    body.innerHTML = rows.join('')
+  }
+
   private renderQuestBoard(body: HTMLElement): void {
     const q = this.activeQuest
     const stars = this.journal.stars()
@@ -2197,6 +2273,7 @@ export class App {
       this.audio.stinger('spark')
       this.activeQuest = null
       void this.completeClaimedAct()
+      invalidateXp() // our standing just changed
     }
     // remember the run in hand so the quest board can show it
     const brief = /carry(?: this sealed phrase)? (?:to )?(#\S+)[^:]*:\s*(PKT-\w+)/i.exec(text) ?? /(PKT-\w+)[\s\S]*?(#\S+)/i.exec(text)

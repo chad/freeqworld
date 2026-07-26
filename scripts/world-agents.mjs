@@ -10,8 +10,8 @@
 // Seeds persist in .agents/ so each agent keeps its DID (and thus its face).
 
 import { FreeqClient } from '@freeq/sdk'
-import { actTags, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
-import { deliveryOutcome, existingEnvelope } from './quest.mjs'
+import { actTags, actKid, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
+import { deliveryOutcome, existingEnvelope, questCanonical, completionPayload } from './quest.mjs'
 import nacl from 'tweetnacl'
 import { hkdfSync, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -227,6 +227,47 @@ for (const [i, agent] of AGENTS.entries()) {
     return brief
   }
 
+
+  /** Attest a completed run to the durable event log (spec: coordination_events).
+   *
+   *  The witness signs; the player is named in the payload. Only this agent can
+   *  write a completion, and the signature is checked against the public key
+   *  inside its own did:key, so nothing between here and a leaderboard can
+   *  invent one. TAGMSG only — a plain IRC client sees nothing, and this is
+   *  deliberately not the SDK's emitEvent(), which also sends a PRIVMSG. */
+  const attestCompletion = (nick, kind, channel, bonus, retry = true) => {
+    // XP belongs to the DID, not the nick — a player's nick changes with how
+    // they signed in (see scripts/quest.mjs), and a level must survive that.
+    const playerDid = client.getDidForNick?.(nick)
+    if (!playerDid) {
+      if (retry) {
+        // ask, then try once more; never drop the credit silently
+        try { client.whois(nick) } catch { /* not connected */ }
+        setTimeout(() => attestCompletion(nick, kind, channel, bonus, false), 2500)
+        return
+      }
+      console.log(`[${agent.nick}] cannot attest ${kind} for ${nick}: no DID known`)
+      return
+    }
+    try {
+      const payload = completionPayload({
+        player: playerDid, kind, channel, bonus: Boolean(bonus), witness: did,
+      })
+      const sig = `ed25519:${actKid(kp.publicKey)}:${b64url(
+        nacl.sign.detached(new TextEncoder().encode(questCanonical(payload)), kp.secretKey),
+      )}`
+      client.sendTagmsg(channel, {
+        msgid: ulid(),
+        '+freeq.at/event': 'quest_complete',
+        '+freeq.at/payload': JSON.stringify(payload).replace(/;/g, '%3B').replace(/ /g, '%20'),
+        '+freeq.at/sig': sig,
+      })
+      console.log(`[${agent.nick}] attested ${kind} for ${playerDid.slice(0, 24)}… in ${channel}${bonus ? ' (x2)' : ''}`)
+    } catch (e) {
+      console.log(`[${agent.nick}] attest failed:`, String(e).slice(0, 120))
+    }
+  }
+
   /** A survey is completed over DM: the courier reports the topic they read. */
   const trySurvey = (nick, text) => {
     const q = quests.get(nick.toLowerCase())
@@ -242,6 +283,7 @@ for (const [i, agent] of AGENTS.entries()) {
     quests.delete(nick.toLowerCase())
     saveQuests()
     console.log(`[${agent.nick}] quest complete (survey): ${nick} charted ${q.target}`)
+    attestCompletion(nick, 'survey', q.target, Boolean(q.bonus))
     setTimeout(() => client.sendMessage(q.target, `⭐ ${nick} charted this room and the register agrees. the map is truer than it was.`), 700)
     return `that matches the register, ${nick}. ⭐ ${q.target} is charted. say "quest" whenever you want another run.`
   }
@@ -303,6 +345,7 @@ for (const [i, agent] of AGENTS.entries()) {
       quests.delete(courierKey)
       saveQuests()
       console.log(`[${agent.nick}] quest complete (escort): ${q.courier} welcomed ${q.newcomer}`)
+      attestCompletion(q.courier, 'escort', ch, true)
       setTimeout(() => {
         client.sendMessage(ch, `⭐⭐ ${q.newcomer} was greeted by ${q.courier} — and answered. a stranger is a stranger only once; the channel bore witness.`)
         client.sendMessage(q.courier, `quest complete, ${q.courier}. ⭐⭐ you made ${q.newcomer} welcome. say "quest" whenever you want another run.`)
@@ -328,6 +371,7 @@ for (const [i, agent] of AGENTS.entries()) {
         `[${agent.nick}] quest complete (${done.kind}): ${msg.from} in ${ch}` +
           (delivery.viaStale ? ` (carried ${delivery.stale.quest.phrase}, sealed for ${delivery.stale.key})` : ''),
       )
+      attestCompletion(msg.from, done.kind, ch, done.bonus)
       const stars = done.bonus ? '⭐⭐' : '⭐'
       setTimeout(() => {
         client.sendMessage(
