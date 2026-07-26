@@ -10,6 +10,7 @@ import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
 import { helpHtml } from './help'
+import { decodeInvite } from '../../shared/src/invite'
 import { LADDERS } from '../../shared/src/xp'
 import { FreeqBackend } from './freeqBackend'
 import { avatarDid, createIdentity, loadIdentity, type Identity } from './identity'
@@ -96,6 +97,8 @@ export class App {
   private identity: Identity | null = null
   /** your own theme plays once per session, on arrival */
   private playedOwnTheme = false
+  /** an invite token from the URL, redeemed once we have an authenticated DID */
+  private pendingInvite: string | null = null
   private conn: TownConnection | FreeqBackend | null = null
   private town: TownProfile | null = null
   private rooms = new Map<string, RoomManifest>()
@@ -272,6 +275,7 @@ export class App {
         onAuth: (did) => {
           this.toast(`◈ DID authenticated with the server: ${shortDid(did)}`)
           this.updateInspectorMeta()
+          this.redeemPendingInvite(did)
         },
         onDm: (fromNick, text, ts) => this.onDmIn(fromNick, text, ts),
         onTouch: (fromNick, ts, sig, signerDid) => this.onTouchIn(fromNick, ts, sig, signerDid),
@@ -1213,6 +1217,32 @@ export class App {
    *  server keeps for you — the numbers are a proof anyone can recompute. */
   /** How to play. Built from the same constants that score the game, so it can
    *  never promise something the code doesn't do. */
+
+  /** An invite only counts once the server has authenticated who we are: the
+   *  whole point is that the arrival is attributable. A did:key guest is told
+   *  plainly that it won't count rather than being silently ignored. */
+  private redeemPendingInvite(did: string): void {
+    const token = this.pendingInvite ?? localStorage.getItem('fimp-invite')
+    if (!token) return
+    this.pendingInvite = null
+    localStorage.removeItem('fimp-invite')
+    const parsed = decodeInvite(token)
+    if (!parsed) return
+    if (!did.startsWith('did:plc:') && !did.startsWith('did:web:')) {
+      this.toast('◇ you arrived on an invite — sign in with your Bluesky handle for your host to get the credit')
+      // keep it: signing in properly later should still pay them
+      localStorage.setItem('fimp-invite', token)
+      return
+    }
+    const conn = this.conn
+    if (!conn || !('redeemInvite' in conn)) {
+      this.toast('◇ invites are only witnessed on the live network')
+      return
+    }
+    conn.redeemInvite(this.channel, token)
+    this.toast('◈ invite accepted — say something and your host gets the credit')
+  }
+
   private async showHelp(): Promise<void> {
     el('helpcard').classList.remove('hidden')
     const body = el('help-body')

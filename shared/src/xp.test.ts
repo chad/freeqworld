@@ -208,7 +208,7 @@ describe('the leaderboard is the same computation, grouped', () => {
     expect(ladderBoard(standings(log), 'welcomer')[0]!.player).toBe(ALICE)
     expect(ladderBoard(standings(log), 'cartographer')[0]!.player).toBe(BOB)
     expect(ladderBoard(standings(log), 'witness')).toEqual([])
-    expect(LADDERS.map((l) => l.id)).toEqual(['courier', 'cartographer', 'kindler', 'welcomer', 'witness'])
+    expect(LADDERS.map((l) => l.id)).toEqual(['courier', 'cartographer', 'kindler', 'welcomer', 'herald', 'witness'])
   })
 
   it('excludes unverified work from the board entirely', () => {

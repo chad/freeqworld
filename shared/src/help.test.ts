@@ -6,7 +6,16 @@ import { LEVELS, QUEST_KINDS } from './xp'
 // rekindle required a day of silence when nothing checked for it.
 describe('the quest catalogue the help page renders', () => {
   it('describes every run the witness can actually confirm', () => {
-    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'escort'])
+    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'referral', 'escort'])
+  })
+
+  it('pays most for bringing a new identity in', () => {
+    const referral = QUEST_KINDS.find((q) => q.id === 'referral')!
+    const escort = QUEST_KINDS.find((q) => q.id === 'escort')!
+    // a referral grows the network; an escort welcomes someone already here
+    expect(referral.xp * 2).toBeGreaterThan(escort.xp * 2 * 0.9)
+    expect(referral.alwaysDouble).toBe(true)
+    expect(referral.witnessedBy).toMatch(/real AT Protocol identity/)
   })
 
   it('reads its XP from the scoring table rather than restating it', () => {
@@ -27,7 +36,7 @@ describe('the quest catalogue the help page renders', () => {
 
   it('claims a witness for each run, and no unwitnessable work', () => {
     const claims = QUEST_KINDS.map((q) => q.witnessedBy.toLowerCase()).join(' ')
-    expect(claims).toMatch(/member of that channel|register|timestamps|both halves/)
+    expect(claims).toMatch(/member of that channel|register|timestamps|both halves|witnessed/)
     // nothing may claim to be verified "automatically" or by the client
     expect(claims).not.toMatch(/client-side|trust me|automatic/)
   })

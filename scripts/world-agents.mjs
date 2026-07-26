@@ -11,7 +11,10 @@
 
 import { FreeqClient } from '@freeq/sdk'
 import { actTags, actKid, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
-import { deliveryOutcome, existingEnvelope, questCanonical, completionPayload } from './quest.mjs'
+import {
+  deliveryOutcome, existingEnvelope, questCanonical, completionPayload,
+  invitePayload, inviteCanonical, encodeInvite,
+} from './quest.mjs'
 import nacl from 'tweetnacl'
 import { hkdfSync, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -62,8 +65,9 @@ const POS_TAG = '+freeq.at/world-pos'
 
 /** Which run the courier asked for. Defaults to the classic courier run. */
 function questKind(text) {
-  const m = /quest\s+(survey|rekindle|escort)/i.exec(text)
-  return m ? m[1].toLowerCase() : 'courier'
+  const m = /quest\s+(survey|rekindle|escort|referral|invite)/i.exec(text)
+  const kind = m ? m[1].toLowerCase() : 'courier'
+  return kind === 'invite' ? 'referral' : kind
 }
 
 const AGENTS = [
@@ -111,7 +115,7 @@ const AGENTS = [
       const surveyed = ctx.trySurvey(ctx.from, ctx.text)
       if (surveyed) return surveyed
       if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
-      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, or "quest escort" to make a newcomer welcome — real work, verified in the real channel.`
+      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, or "quest referral" for an invite that carries your name — real work, verified in the real channel.`
     },
   },
 ]
@@ -156,6 +160,14 @@ for (const [i, agent] of AGENTS.entries()) {
     if (ms > (lastMsgAt.get(ch) ?? 0)) lastMsgAt.set(ch, ms)
   }
   const quietForMs = (ch) => Date.now() - (lastMsgAt.get(ch) ?? 0)
+
+  client.on('coordinationEvent', (ev) => {
+    // a newcomer redeeming an invite. This rides the same durable event log as
+    // everything else, so the redemption is auditable after the fact.
+    if (ev?.eventType !== 'invite_redeem') return
+    const token = ev.payload?.token
+    if (typeof token === 'string' && ev.from) onInviteRedeem(ev.from, token)
+  })
 
   client.on('historyBatch', (ch, messages) => {
     // everyone already in the logs is a regular, not a newcomer
@@ -241,6 +253,10 @@ for (const [i, agent] of AGENTS.entries()) {
         return `every room i watch has been spoken in today, ${nick} — nothing to rekindle. say "quest" for a courier run, or come back when somewhere has gone quiet.`
       }
       q = { kind: 'rekindle', target: stale, bonus: true, quietHours: Math.floor(quietForMs(stale) / 3600_000) }
+    } else if (kind === 'referral') {
+      // no quest ledger entry: the signed token is the record, so an agent
+      // restart can never invalidate an invite already in someone's hands
+      return mintInvite(nick)
     } else if (kind === 'escort') {
       const day = Date.now() - 24 * 3600 * 1000
       const fresh = [...newcomers.values()]
@@ -269,20 +285,9 @@ for (const [i, agent] of AGENTS.entries()) {
    *  inside its own did:key, so nothing between here and a leaderboard can
    *  invent one. TAGMSG only — a plain IRC client sees nothing, and this is
    *  deliberately not the SDK's emitEvent(), which also sends a PRIVMSG. */
-  const attestCompletion = (nick, kind, channel, bonus, retry = true) => {
-    // XP belongs to the DID, not the nick — a player's nick changes with how
-    // they signed in (see scripts/quest.mjs), and a level must survive that.
-    const playerDid = client.getDidForNick?.(nick)
-    if (!playerDid) {
-      if (retry) {
-        // ask, then try once more; never drop the credit silently
-        try { client.whois(nick) } catch { /* not connected */ }
-        setTimeout(() => attestCompletion(nick, kind, channel, bonus, false), 2500)
-        return
-      }
-      console.log(`[${agent.nick}] cannot attest ${kind} for ${nick}: no DID known`)
-      return
-    }
+  /** Attest for a DID we already hold (referrals know the inviter's DID). */
+  const attestCompletionForDid = (playerDid, kind, channel, bonus) => {
+    if (!playerDid) return
     try {
       const payload = completionPayload({
         player: playerDid, kind, channel, bonus: Boolean(bonus), witness: did,
@@ -300,6 +305,148 @@ for (const [i, agent] of AGENTS.entries()) {
     } catch (e) {
       console.log(`[${agent.nick}] attest failed:`, String(e).slice(0, 120))
     }
+  }
+
+  const attestCompletion = (nick, kind, channel, bonus, retry = true) => {
+    // XP belongs to the DID, not the nick — a player's nick changes with how
+    // they signed in (see scripts/quest.mjs), and a level must survive that.
+    const playerDid = client.getDidForNick?.(nick)
+    if (!playerDid) {
+      if (retry) {
+        // ask, then try once more; never drop the credit silently
+        try { client.whois(nick) } catch { /* not connected */ }
+        setTimeout(() => attestCompletion(nick, kind, channel, bonus, false), 2500)
+        return
+      }
+      console.log(`[${agent.nick}] cannot attest ${kind} for ${nick}: no DID known`)
+      return
+    }
+    attestCompletionForDid(playerDid, kind, channel, bonus)
+  }
+
+
+  const INVITE_REASON_TEXT = {
+    malformed: "that invite link isn't readable — ask for a fresh one",
+    'bad-signature': "that invite wasn't signed by me, so i can't honour it",
+    expired: 'that invite has expired — ask your host for a new one',
+    'self-referral': "that's your own invite; someone else has to use it",
+    'not-an-account': 'referrals only count for a real AT Protocol identity — sign in with your Bluesky handle and the credit will land',
+    'already-known': 'that identity has spoken here before, so it is not a new arrival',
+  }
+
+  /** Verify one of OUR invites. We signed it, so we check it with our own key —
+   *  no key resolution, no lookup, no trust in the bearer. */
+  const checkInviteToken = (token, redeemer) => {
+    const parts = String(token ?? '').split('.')
+    if (parts.length !== 2) return { ok: false, reason: 'malformed' }
+    let payload
+    try {
+      payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString())
+    } catch {
+      return { ok: false, reason: 'malformed' }
+    }
+    if (payload?.k !== 'invite' || !payload.inviter || !payload.witness) return { ok: false, reason: 'malformed' }
+    if (payload.witness !== did) return { ok: false, reason: 'bad-signature' }
+    const ok = nacl.sign.detached.verify(
+      new TextEncoder().encode(inviteCanonical(payload)),
+      Buffer.from(parts[1], 'base64url'),
+      kp.publicKey,
+    )
+    if (!ok) return { ok: false, reason: 'bad-signature' }
+    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return { ok: false, reason: 'expired', payload }
+    if (!redeemer) return { ok: false, reason: 'not-an-account', payload }
+    if (redeemer === payload.inviter) return { ok: false, reason: 'self-referral', payload }
+    if (!redeemer.startsWith('did:plc:') && !redeemer.startsWith('did:web:')) {
+      return { ok: false, reason: 'not-an-account', payload }
+    }
+    if (seen.has(String(redeemer).toLowerCase())) return { ok: false, reason: 'already-known', payload }
+    return { ok: true, payload }
+  }
+
+  // ── Referrals ─────────────────────────────────────────────────────────────
+  //
+  // "X invited me" is unverifiable, so it can never pay. Instead we mint a token
+  // bound to the inviter and sign it; the newcomer's client redeems it as a
+  // `+freeq.at/event=invite_redeem` TAGMSG, which lands in the same public log
+  // as everything else. Credit is attested only once they actually SPEAK, and
+  // only for a real AT Protocol identity — a throwaway browser key is free to
+  // mint, so allowing it would make self-referral free.
+  const invitePath = join(SEED_DIR, `invites-${agent.nick}.json`)
+  /** redeemerDid -> { inviter, id, at } — waiting for the newcomer to speak */
+  const pendingReferrals = new Map()
+  /** "inviter|redeemer" pairs already credited, so a referral pays exactly once */
+  const creditedReferrals = new Set()
+  try {
+    if (existsSync(invitePath)) {
+      const saved = JSON.parse(readFileSync(invitePath, 'utf8'))
+      for (const [k, v] of Object.entries(saved.pending ?? {})) pendingReferrals.set(k, v)
+      for (const k of saved.credited ?? []) creditedReferrals.add(k)
+    }
+  } catch { /* fresh */ }
+  const saveInvites = () => {
+    try {
+      writeFileSync(invitePath, JSON.stringify({
+        pending: Object.fromEntries(pendingReferrals),
+        credited: [...creditedReferrals].slice(-2000),
+      }))
+    } catch { /* disk hiccup */ }
+  }
+
+  const REFERRALS_PER_DAY = 5
+  const mintInvite = (nick) => {
+    const inviter = client.getDidForNick?.(nick)
+    if (!inviter) {
+      try { client.whois(nick) } catch { /* not connected */ }
+      return `i need to know your DID before i can put your name on an invite, ${nick} — try again in a moment.`
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    const usedToday = [...creditedReferrals].filter((k) => k.startsWith(`${inviter}|`) && k.endsWith(`|${today}`)).length
+    if (usedToday >= REFERRALS_PER_DAY) {
+      return `you've brought ${usedToday} people in today, ${nick} — that's enough for one day. come back tomorrow.`
+    }
+    const payload = invitePayload({ inviter, witness: did, id: ulid() })
+    const sig = nacl.sign.detached(new TextEncoder().encode(inviteCanonical(payload)), kp.secretKey)
+    const token = encodeInvite(payload, sig)
+    console.log(`[${agent.nick}] invite minted for ${nick} (${inviter.slice(0, 24)}…)`)
+    return `REFERRAL for ${nick}: give this to someone who has never been here — https://world.freeq.at/?invite=${token} — the run completes when they arrive with a real Bluesky identity and say something. it pays double, and i will name you as their host.`
+  }
+
+  /** A newcomer redeemed an invite: hold it until they speak. */
+  const onInviteRedeem = (redeemerNick, token) => {
+    const redeemer = client.getDidForNick?.(redeemerNick)
+    const check = checkInviteToken(token, redeemer)
+    if (!check.ok) {
+      console.log(`[${agent.nick}] invite refused (${check.reason}) from ${redeemerNick}`)
+      const say = INVITE_REASON_TEXT[check.reason] ?? 'that invite cannot be honoured'
+      try { client.sendMessage(redeemerNick, `${say}.`) } catch { /* offline */ }
+      return
+    }
+    if (pendingReferrals.has(redeemer)) return
+    pendingReferrals.set(redeemer, { inviter: check.payload.inviter, id: check.payload.id, at: Date.now() })
+    saveInvites()
+    console.log(`[${agent.nick}] invite redeemed by ${redeemerNick} (host ${check.payload.inviter.slice(0, 24)}…) — awaiting first words`)
+    try {
+      client.sendMessage(redeemerNick, `welcome — you arrived on an invite. say something in the room and your host gets the credit.`)
+    } catch { /* offline */ }
+  }
+
+  /** Their first real sentence completes their host's run. */
+  const creditReferralIfSpoken = (speakerNick, ch, text) => {
+    const speaker = client.getDidForNick?.(speakerNick)
+    if (!speaker) return
+    const pend = pendingReferrals.get(speaker)
+    if (!pend || text.trim().length < 12) return
+    const today = new Date().toISOString().slice(0, 10)
+    const key = `${pend.inviter}|${speaker}|${today}`
+    if (creditedReferrals.has(key)) return
+    creditedReferrals.add(key)
+    pendingReferrals.delete(speaker)
+    saveInvites()
+    console.log(`[${agent.nick}] referral complete: ${pend.inviter.slice(0, 24)}… brought ${speaker.slice(0, 24)}…`)
+    attestCompletionForDid(pend.inviter, 'referral', ch, true)
+    setTimeout(() => {
+      client.sendMessage(ch, `⭐⭐ ${speakerNick} arrived on an invite and spoke — a new identity in the world. their host's referral is complete, and the channel bore witness.`)
+    }, 700)
   }
 
   /** A survey is completed over DM: the courier reports the topic they read. */
@@ -366,6 +513,10 @@ for (const [i, agent] of AGENTS.entries()) {
       newcomers.set(fromKey, { nick: msg.from, channel: ch, ts: Date.now() })
       console.log(`[${agent.nick}] newcomer: ${msg.from} in ${ch}`)
     }
+
+    // a newcomer who arrived on an invite: their first real sentence completes
+    // their host's referral
+    creditReferralIfSpoken(msg.from, ch, msg.text)
 
     // ESCORT, half one: the courier greets the newcomer by name
     const mine = quests.get(fromKey)

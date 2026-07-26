@@ -125,3 +125,28 @@ export function completionPayload({ player, kind, channel, bonus, ts, witness })
     witness: String(witness),
   }
 }
+
+// --- invites -----------------------------------------------------------------
+// Mirrors shared/src/invite.ts (the agents run under bare node and can't import
+// TS). shared/src/invite.test.ts mints with this and verifies with that.
+
+export const INVITE_TTL_SECONDS = 7 * 24 * 3600
+
+export function inviteCanonical(p) {
+  const flat = {
+    exp: String(p.exp), iat: String(p.iat), id: String(p.id),
+    inviter: String(p.inviter), k: String(p.k), witness: String(p.witness),
+  }
+  const keys = Object.keys(flat).sort()
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${JSON.stringify(flat[k])}`).join(',')}}`
+}
+
+export function invitePayload({ inviter, witness, id, now }) {
+  const iat = now ?? Math.floor(Date.now() / 1000)
+  return { k: 'invite', inviter, id, iat, exp: iat + INVITE_TTL_SECONDS, witness }
+}
+
+export function encodeInvite(payload, sigBytes) {
+  const body = Buffer.from(inviteCanonical(payload)).toString('base64url')
+  return `${body}.${Buffer.from(sigBytes).toString('base64url')}`
+}

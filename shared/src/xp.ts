@@ -28,17 +28,19 @@ export const QUEST_EVENT = 'quest_complete'
 
 /** The five ladders. Separate boards so more than one person can be first at
  *  something — a single ranking makes one winner and everybody else a loser. */
-export type Ladder = 'courier' | 'cartographer' | 'kindler' | 'welcomer' | 'witness'
+export type Ladder = 'courier' | 'cartographer' | 'kindler' | 'welcomer' | 'herald' | 'witness'
 
 export const LADDERS: { id: Ladder; label: string; blurb: string }[] = [
   { id: 'courier', label: 'Courier', blurb: 'sealed phrases carried' },
   { id: 'cartographer', label: 'Cartographer', blurb: 'rooms charted' },
   { id: 'kindler', label: 'Kindler', blurb: 'quiet rooms woken' },
   { id: 'welcomer', label: 'Welcomer', blurb: 'newcomers who answered' },
+  { id: 'herald', label: 'Herald', blurb: 'identities brought into the network' },
   { id: 'witness', label: 'Witness', blurb: 'work countersigned' },
 ]
 
 const LADDER_FOR_KIND: Record<string, Ladder> = {
+  referral: 'herald',
   courier: 'courier',
   survey: 'cartographer',
   rekindle: 'kindler',
@@ -49,6 +51,10 @@ const LADDER_FOR_KIND: Record<string, Ladder> = {
 /** Weighted by how hard the work is to fake, not by how long it takes.
  *  An escort needs a stranger to voluntarily answer, so it pays most. */
 const XP_BY_KIND: Record<string, number> = {
+  // bringing a real new identity into the network is the most valuable single
+  // act available, so it pays most — and it is the hardest to fake, because the
+  // arrival is witnessed and a throwaway key is refused
+  referral: 50,
   courier: 10,
   survey: 15,
   rekindle: 25,
@@ -128,6 +134,15 @@ export const QUEST_KINDS: QuestKind[] = [
     doThis: 'go to the room it names — one that has genuinely been silent for over a day — and say something worth answering',
     witnessedBy: 'the silence is measured from real message timestamps; only a dead room can be offered',
     xp: XP_BY_KIND.rekindle!,
+    alwaysDouble: true,
+  },
+  {
+    id: 'referral',
+    label: 'Referral',
+    ask: 'cartographer, quest referral',
+    doThis: 'it DMs you an invite link — give it to someone who has never been here, and the run completes when they arrive and speak',
+    witnessedBy: 'the invite is signed and names you; the arrival is witnessed, and only a real AT Protocol identity counts',
+    xp: XP_BY_KIND.referral!,
     alwaysDouble: true,
   },
   {
@@ -262,7 +277,7 @@ export function standings(completions: Completion[]): Standing[] {
   for (const [player, list] of byPlayer) {
     const xp = creditedXp(list)
     const { level, title } = levelFor(xp)
-    const byLadder = { courier: 0, cartographer: 0, kindler: 0, welcomer: 0, witness: 0 } as Record<Ladder, number>
+    const byLadder = { courier: 0, cartographer: 0, kindler: 0, welcomer: 0, herald: 0, witness: 0 } as Record<Ladder, number>
     for (const c of list) {
       const ladder = LADDER_FOR_KIND[c.kind]
       if (ladder) byLadder[ladder]++

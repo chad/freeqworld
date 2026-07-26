@@ -62,7 +62,7 @@ export async function standingFor(did: string | null): Promise<Standing> {
     level: 1,
     title: 'Wanderer',
     runs: 0,
-    byLadder: { courier: 0, cartographer: 0, kindler: 0, welcomer: 0, witness: 0 },
+    byLadder: { courier: 0, cartographer: 0, kindler: 0, welcomer: 0, herald: 0, witness: 0 },
     lastAt: 0,
   }
 }

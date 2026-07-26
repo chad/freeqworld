@@ -555,6 +555,20 @@ export class FreeqBackend {
     }
   }
 
+  /** Redeem an invite by putting it on the durable event log, so the redemption
+   *  is auditable rather than a private claim (see shared/src/invite.ts). */
+  redeemInvite(channel: string, token: string): void {
+    try {
+      this.client.sendTagmsg(channel, {
+        msgid: crypto.randomUUID(),
+        '+freeq.at/event': 'invite_redeem',
+        '+freeq.at/payload': JSON.stringify({ token }).replace(/;/g, '%3B').replace(/ /g, '%20'),
+      })
+    } catch {
+      /* not connected — the caller retries on the next auth */
+    }
+  }
+
   /** Ask a peer which room they're in (they answer over a nick-targeted TAGMSG). */
   askWhere(nick: string): void {
     try {

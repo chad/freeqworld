@@ -39,3 +39,10 @@ export declare function questCanonical(payload: Record<string, string>): string
 export declare function completionPayload(a: {
   player: string; kind: string; channel: string; bonus?: boolean; ts?: number; witness: string
 }): Record<string, string>
+
+export declare const INVITE_TTL_SECONDS: number
+export declare function inviteCanonical(p: Record<string, unknown>): string
+export declare function invitePayload(a: { inviter: string; witness: string; id: string; now?: number }): {
+  k: string; inviter: string; id: string; iat: number; exp: number; witness: string
+}
+export declare function encodeInvite(payload: Record<string, unknown>, sigBytes: Uint8Array): string
