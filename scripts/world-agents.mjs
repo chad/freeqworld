@@ -252,9 +252,9 @@ for (const [i, agent] of AGENTS.entries()) {
       return reminder
     }
     if (decision.action === 'blocked') {
-      const msg = `you're still holding a ${decision.holding} run, ${nick}, and i only track one at a time — finish it, or say "quest drop" and i'll tear it up. then ask me for the ${decision.kind} again.`
-      if (!viaDm) client.sendMessage(nick, msg)
-      return msg
+      // a refusal carries no secret, so it does not need a DM — the caller
+      // relays it in the room. DMing it too is how players got it twice.
+      return `you're still holding a ${decision.holding} run, ${nick}, and i only track one at a time — finish it, or say "quest drop" and i'll tear it up. then ask me for the ${decision.kind} again.`
     }
     let q
     if (kind === 'survey') {
@@ -897,7 +897,14 @@ for (const [i, agent] of AGENTS.entries()) {
     // gate it PER USER instead: every courier who asks gets their envelope.
     if (agent.nick === 'cartographer' && /quest/i.test(msg.text)) {
       const qkey = `quest:${msg.from.toLowerCase()}`
-      if (Date.now() - (lastReply.get(qkey) ?? 0) < 8_000) return
+      // A flood gate, not a wall. At 8s this silently ate people's requests —
+      // ask for a survey seven seconds after a courier and NOTHING came back,
+      // which is half of why "he just sends me the original quest" felt like the
+      // agent ignoring you. Short, and it says when it drops.
+      if (Date.now() - (lastReply.get(qkey) ?? 0) < 3_000) {
+        console.log(`[${agent.nick}] rate-gated a request from ${msg.from} (under 3s)`)
+        return
+      }
       lastReply.set(qkey, Date.now())
       const reply = agent.brain(ctxFor(msg, ch))
       if (reply) setTimeout(() => client.sendMessage(ch, reply), 500 + Math.random() * 500)
