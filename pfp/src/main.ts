@@ -3,16 +3,26 @@
 // or "surprise me" → PFP preview + PNG download. No login required.
 
 import { generateKeypair, didFromPublicKey } from '../../shared/src/signing'
+import { deriveAvatar } from '../../shared/src/avatar'
 import { renderPfp, traitSummary, canvasToPngBlob, canvasToPngBase64, type Variant } from './render'
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
-import { revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme } from './theme'
+import {
+  revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme, themeClock, onPlayStateChange,
+} from './theme'
+import { Stage } from './stage'
 import { startPfpOAuth, consumePfpOAuthReturn, setAvatarViaBroker, type PfpOAuthReturn } from './oauth'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
 let currentDid: string | null = null
 let currentLabel = ''
+/** which still is exported / shown when not on the live view */
 let variant: Variant = 'explorer'
+/** the default view: the character moving, in time with their own theme */
+let view: 'live' | Variant = 'live'
+
+const stage = new Stage($<HTMLCanvasElement>('pfp'))
+stage.setClock(themeClock)
 
 async function resolveHandle(handle: string): Promise<string> {
   const clean = handle.trim().replace(/^@/, '')
@@ -30,12 +40,21 @@ function short(did: string): string {
 
 async function paint(): Promise<void> {
   if (!currentDid) return
-  const { avatar, canvas } = await renderPfp(currentDid, variant, 512)
-  const target = $<HTMLCanvasElement>('pfp')
-  const ctx = target.getContext('2d')!
-  ctx.imageSmoothingEnabled = false
-  ctx.clearRect(0, 0, target.width, target.height)
-  ctx.drawImage(canvas, 0, 0, target.width, target.height)
+  const avatar = await deriveAvatar(currentDid)
+  if (view === 'live') {
+    // the animated stage owns the canvas
+    await stage.show(currentDid)
+    stage.start()
+  } else {
+    stage.stop()
+    const { canvas } = await renderPfp(currentDid, variant, 512)
+    const target = $<HTMLCanvasElement>('pfp')
+    const ctx = target.getContext('2d')!
+    ctx.imageSmoothingEnabled = false
+    ctx.clearRect(0, 0, target.width, target.height)
+    ctx.drawImage(canvas, 0, 0, target.width, target.height)
+  }
+  $('livebadge').classList.toggle('hidden', view !== 'live')
 
   $('did').textContent = short(currentDid)
   $('did').title = currentDid
@@ -61,6 +80,27 @@ async function generateFromHandle(): Promise<void> {
   } finally {
     setBusy(false)
   }
+}
+
+function setView(v: 'live' | Variant): void {
+  view = v
+  if (v !== 'live') variant = v
+  for (const id of ['live', 'portrait', 'explorer']) {
+    $(`v-${id}`).classList.toggle('active', id === v)
+  }
+  void paint()
+}
+
+/** Beat dots + "now playing" line, driven by the same clock as the stage. */
+function runBeatIndicator(): void {
+  const dots = [...document.querySelectorAll<HTMLElement>('#beats i')]
+  const tick = () => {
+    const { beats, playing } = themeClock()
+    const active = playing ? Math.floor(beats) % 4 : -1
+    dots.forEach((d, i) => d.classList.toggle('on', i === active))
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
 }
 
 async function surpriseMe(): Promise<void> {
@@ -115,14 +155,20 @@ function bind(): void {
     e.preventDefault()
     downloadTheme(currentLabel)
   })
-  for (const v of ['portrait', 'explorer'] as Variant[]) {
-    $(`v-${v}`).addEventListener('click', () => {
-      variant = v
-      $('v-portrait').classList.toggle('active', v === 'portrait')
-      $('v-explorer').classList.toggle('active', v === 'explorer')
-      void paint()
-    })
+  // three views: the live animated character (default), and the two stills
+  // that get exported / uploaded
+  for (const v of ['live', 'portrait', 'explorer'] as const) {
+    $(`v-${v}`).addEventListener('click', () => setView(v))
   }
+  // the canvas itself is the play button on the live view
+  $('pfp').addEventListener('click', () => {
+    if (view === 'live') void toggleTheme()
+    else setView('live')
+  })
+  $('stage-play').addEventListener('click', (e) => {
+    e.stopPropagation()
+    void toggleTheme()
+  })
   $('setbsky').addEventListener('click', openConnect)
   $('c-cancel').addEventListener('click', () => $('connect').classList.add('hidden'))
   $('c-go').addEventListener('click', () => void doConnect())
@@ -153,9 +199,8 @@ function showDone(handle: string, posted: boolean): void {
 async function completeOAuth(ret: PfpOAuthReturn): Promise<void> {
   currentDid = ret.did
   currentLabel = `@${ret.handle}`
+  // keep the visitor on the live view; `variant` is only what gets uploaded
   variant = ret.variant
-  $('v-portrait').classList.toggle('active', variant === 'portrait')
-  $('v-explorer').classList.toggle('active', variant === 'explorer')
   await paint()
   $('connect').classList.remove('hidden')
   $<HTMLButtonElement>('c-oauth').disabled = true
@@ -237,6 +282,13 @@ async function doConnect(): Promise<void> {
 }
 
 bind()
+runBeatIndicator()
+onPlayStateChange((on) => {
+  $('nowplaying-text').textContent = on
+    ? 'now playing — your character moves to it'
+    : 'your theme, composed from your DID'
+  if (on && view !== 'live') setView('live') // the music deserves the animation
+})
 
 // Handle a broker OAuth return on load (one-tap completion).
 const oauthReturn = consumePfpOAuthReturn()

@@ -161,10 +161,28 @@ PDS allows within the session.
 
 ## Shipped addition: the theme tune (2026-07-25)
 
-The reveal now has a second half. The same DID that derives the face also mints
-a **chiptune** — key, tempo, mood, chord loop, bass/harmony/percussion styles,
-and the personal leitmotif as the melody's opening figure. It plays on demand
-(`▶ hear your theme`), never on page load, and can be downloaded as a `.wav`.
+The reveal now has a second half, and it is the **default view**. The same DID
+that derives the face also mints a **chiptune** — key, tempo, mood, chord loop,
+bass/harmony/percussion styles, and the personal leitmotif as the melody's
+opening figure — and the character is shown *alive*, moving to it.
+
+- `pfp/src/stage.ts` animates the sprite on the same canvas the still uses, in
+  the same visual language (it imports render.ts's backdrop/scene/sprite
+  painters). Idle: breathing, blinking, sway/tap per the `idle_movement` trait.
+  Playing: a walk cycle paced by `walk_cadence`, turning to a new facing each
+  bar, floor tiles lighting one per beat, the glow and accent ring pulsing on
+  the beat, and a ♪ drifting off the character every bar. The `arrival_effect`
+  trait (sparkle / dissolve / drop / teleport-rings) plays on every reveal.
+- Everything moves off ONE clock: `ChiptunePlayer.position` (beats derived from
+  `AudioContext.currentTime`), so motion is locked to the audio rather than to
+  a wall clock that would drift. Before the visitor presses play the clock
+  free-runs at the tune's tempo — the default view is never a frozen image.
+- The view switcher is `animated | explorer | portrait`. `animated` is the
+  default; the two stills are what get downloaded and uploaded to Bluesky
+  (an avatar has to be a PNG). Starting playback snaps back to `animated`.
+- Play control is both a big ▶ over the stage floor (never over the face) and a
+  primary `play my theme` button, with four beat dots beside the theme name.
+  Audio still never starts on page load.
 
 - Engine: `music/` (see `music/README.md`). Pure TS, no dependencies, no audio
   assets — the loop is synthesised in the browser at ~300 ms for 32 bars and

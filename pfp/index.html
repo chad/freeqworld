@@ -46,7 +46,29 @@
     .surprise { margin-top:10px; font-size:.9rem; color:var(--dim); }
     .hidden { display:none !important; }
     #result { margin-top:22px; display:flex; flex-direction:column; align-items:center; gap:12px; }
-    canvas { image-rendering:pixelated; width:280px; height:280px; border-radius:16px; border:1px solid var(--border); background:#0d0d14; }
+    canvas { image-rendering:pixelated; width:280px; height:280px; border-radius:16px; border:1px solid var(--border); background:#0d0d14; display:block; }
+    /* the stage: the animated character + the play control over it */
+    .stage { position:relative; width:280px; }
+    .stage canvas { cursor:pointer; }
+    /* sits low, over the floor — never covers the face */
+    #stage-play {
+      position:absolute; left:0; right:0; bottom:16px; margin:0 auto; width:58px; height:58px;
+      border-radius:50%; background:rgba(13,13,20,.72); color:var(--amber); border:2px solid var(--amber);
+      font-size:1.3rem; line-height:1; padding:0 0 0 4px; backdrop-filter:blur(2px);
+      display:flex; align-items:center; justify-content:center;
+      transition:transform .12s, opacity .18s; animation:breathe 2.6s ease-in-out infinite;
+    }
+    #stage-play:hover { transform:scale(1.09); animation:none; }
+    @keyframes breathe {
+      0%,100% { box-shadow:0 0 0 0 rgba(255,180,84,.34); }
+      50%     { box-shadow:0 0 0 11px rgba(255,180,84,0); }
+    }
+    .stage .livebadge {
+      position:absolute; top:9px; left:9px; font-size:.62rem; letter-spacing:.1em; text-transform:uppercase;
+      color:var(--dim); background:rgba(13,13,20,.66); border:1px solid var(--border);
+      border-radius:5px; padding:2px 6px;
+    }
+    .stage .livebadge b { color:var(--green); font-weight:400; }
     .label { color:var(--amber); font-weight:700; }
     .did { color:var(--dim); font-size:.8rem; word-break:break-all; text-align:center; max-width:44ch; }
     .variants { display:flex; gap:8px; }
@@ -56,13 +78,24 @@
     .actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
     .note { color:var(--dim); font-size:.82rem; text-align:center; max-width:46ch; line-height:1.5; margin-top:4px; }
     .theme {
-      width:100%; border-top:1px solid var(--border); padding-top:14px; margin-top:2px;
-      display:flex; flex-direction:column; align-items:center; gap:9px;
+      width:100%; display:flex; flex-direction:column; align-items:center; gap:9px;
     }
     .theme-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
     .theme-name { color:var(--green); font-size:.85rem; }
-    #hear.active { border-color:var(--green); color:var(--green); }
+    #hear { min-width:170px; }
+    #hear.playing { background:var(--green); }
     .theme .note a { cursor:pointer; }
+    /* four dots that light up on the beat while the theme plays */
+    .beats { display:flex; gap:5px; align-items:center; }
+    .beats i { width:7px; height:7px; border-radius:50%; background:var(--border); display:block; }
+    .beats i.on { background:var(--green); box-shadow:0 0 7px var(--green); }
+    #nowplaying { display:flex; align-items:center; gap:9px; color:var(--dim); font-size:.8rem; opacity:.5; }
+    #nowplaying.on { opacity:1; }
+    .facetraits summary {
+      cursor:pointer; color:var(--dim); font-size:.8rem; list-style:none; text-align:center;
+    }
+    .facetraits summary::-webkit-details-marker { display:none; }
+    .facetraits[open] summary { margin-bottom:8px; }
     .foot { margin-top:26px; color:var(--dim); font-size:.85rem; text-align:center; }
     .toast {
       position:fixed; left:50%; bottom:24px; transform:translateX(-50%);
@@ -102,31 +135,44 @@
     <div class="surprise">no handle? <a href="#" id="surprise">surprise me →</a></div>
 
     <div id="result" class="hidden">
-      <canvas id="pfp" width="512" height="512"></canvas>
+      <div class="stage">
+        <canvas id="pfp" width="512" height="512"></canvas>
+        <button id="stage-play" title="play your theme">▶</button>
+        <span class="livebadge" id="livebadge"><b>●</b> live</span>
+      </div>
       <div class="label" id="label"></div>
+
+      <div class="theme hidden" id="theme">
+        <div class="theme-head">
+          <button id="hear">▶ play my theme</button>
+          <span class="theme-name" id="theme-name"></span>
+        </div>
+        <div id="nowplaying">
+          <span class="beats" id="beats"><i></i><i></i><i></i><i></i></span>
+          <span id="nowplaying-text">your theme, composed from your DID</span>
+        </div>
+        <div class="traits" id="theme-traits"></div>
+      </div>
+
       <div class="variants">
-        <button class="ghost active" id="v-explorer">explorer</button>
+        <button class="ghost active" id="v-live">animated</button>
+        <button class="ghost" id="v-explorer">explorer</button>
         <button class="ghost" id="v-portrait">portrait</button>
       </div>
-      <div class="traits" id="traits"></div>
+
+      <details class="facetraits">
+        <summary>how your character is derived ›</summary>
+        <div class="traits" id="traits"></div>
+      </details>
       <div class="did" id="did"></div>
       <div class="actions">
         <button id="download">download PNG</button>
         <button class="ghost" id="setbsky">set as Bluesky avatar →</button>
       </div>
-      <div class="note">This isn't uploaded art — it's computed from your DID. It's the exact character you'd walk around as in FreeqWorld.</div>
-
-      <div class="theme hidden" id="theme">
-        <div class="theme-head">
-          <button class="ghost" id="hear">▶ hear your theme</button>
-          <span class="theme-name" id="theme-name"></span>
-        </div>
-        <div class="traits" id="theme-traits"></div>
-        <div class="note">
-          Your DID composes a chiptune too — a 3–5 note motif, a key, a tempo and a groove,
-          generated live in your browser. No audio is downloaded.
-          <a id="theme-sting">play just the motif</a> · <a id="theme-dl">download the loop</a>
-        </div>
+      <div class="note">
+        Nothing here is uploaded art or a sound file — the character <em>and</em> the music are
+        computed from your DID, in this tab. It's exactly who you'd be in FreeqWorld.
+        <a id="theme-sting">play just your motif</a> · <a id="theme-dl">download the loop (wav)</a>
       </div>
     </div>
   </div>

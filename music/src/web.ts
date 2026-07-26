@@ -26,6 +26,19 @@ export class ChiptunePlayer {
   readonly ctx: AudioContext
   private current?: PlayHandle
   private cache = new Map<string, AudioBuffer>()
+  private timeline?: { startedAt: number; duration: number; bpm: number }
+
+  /** Where playback is, for anything that wants to move in time with it
+   *  (the animated avatar stage, beat indicators, visualisers). */
+  get position(): { seconds: number; beats: number; bars: number } | null {
+    const tl = this.timeline
+    if (!tl || this.ctx.state !== 'running') return null
+    const elapsed = this.ctx.currentTime - tl.startedAt
+    if (elapsed < 0) return { seconds: 0, beats: 0, bars: 0 }
+    const seconds = elapsed % tl.duration
+    const beats = (elapsed * tl.bpm) / 60
+    return { seconds, beats, bars: beats / 4 }
+  }
 
   constructor(ctx?: AudioContext) {
     this.ctx = ctx ?? new AudioContext()
@@ -59,6 +72,7 @@ export class ChiptunePlayer {
     gain.gain.linearRampToValueAtTime(vol, this.ctx.currentTime + fade)
     source.connect(gain).connect(this.ctx.destination)
     source.start()
+    this.timeline = { startedAt: this.ctx.currentTime, duration: buf.duration, bpm: theme.bpm }
 
     const handle: PlayHandle = {
       source,
@@ -95,6 +109,7 @@ export class ChiptunePlayer {
   stop(fade = 0.3): void {
     this.current?.stop(fade)
     this.current = undefined
+    this.timeline = undefined
   }
 }
 

@@ -17,7 +17,7 @@ function hexToRgb(hex: string): [number, number, number] {
 }
 
 /** Multiply a #rrggbb toward black (f<1) or white-ish (f>1); returns rgb(). */
-function shade(hex: string, f: number): string {
+export function shade(hex: string, f: number): string {
   if (!hex.startsWith('#')) return hex
   const [r, g, b] = hexToRgb(hex)
   const c = (v: number) => Math.max(0, Math.min(255, Math.round(v * f)))
@@ -42,7 +42,7 @@ function rgbToHsl(hex: string): { h: number; s: number; l: number } {
   return { h, s, l }
 }
 
-function hslCss(h: number, s: number, l: number): string {
+export function hslCss(h: number, s: number, l: number): string {
   return `hsl(${(((h % 360) + 360) % 360).toFixed(0)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%)`
 }
 
@@ -56,7 +56,7 @@ function hueDist(a: number, b: number): number {
  *  same traits, only *steered* for contrast; the core avatar traits are never
  *  changed. Natural tint is the accent colour; if that sits too near the skin
  *  hue (or is near-grey), we swing to the skin's complement. */
-function backdropTint(t: Avatar['traits']): { h: number; s: number } {
+export function backdropTint(t: Avatar['traits']): { h: number; s: number } {
   const skin = rgbToHsl(String(t.skin_palette))
   const acc = rgbToHsl(String(t.accent_palette))
   let h = acc.h
@@ -65,7 +65,7 @@ function backdropTint(t: Avatar['traits']): { h: number; s: number } {
 }
 
 /** Native-resolution (16×24) canvas of one sprite frame. */
-function spriteCanvas(px: SpritePixels): HTMLCanvasElement {
+export function spriteCanvas(px: SpritePixels): HTMLCanvasElement {
   const cv = document.createElement('canvas')
   cv.width = px.width
   cv.height = px.height
@@ -84,7 +84,7 @@ function spriteCanvas(px: SpritePixels): HTMLCanvasElement {
   return cv
 }
 
-function drawScene(ctx: CanvasRenderingContext2D, size: number, bd: { h: number; s: number }): void {
+export function drawScene(ctx: CanvasRenderingContext2D, size: number, bd: { h: number; s: number }): void {
   const floorY = size * 0.7
   // floor slab in the (skin-contrasting) backdrop family, kept dark
   ctx.fillStyle = hslCss(bd.h, bd.s * 0.5, 0.14)
