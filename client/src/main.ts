@@ -16,6 +16,36 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response>
   return realFetch(input, init)
 }
 
+/**
+ * Self-heal a stale cached page.
+ *
+ * A browser that cached BOTH index.html and its hashed bundle will happily run
+ * an old build forever, entirely from disk, never asking the server anything —
+ * so a deployed fix looks like it did nothing. (This bit us for real: a client
+ * kept spawning into a room the current build no longer spawns into.)
+ *
+ * Ask the server which bundle it serves now; if it isn't the one executing,
+ * reload once through a cache-busting URL. Guarded by sessionStorage so it can
+ * never loop, and silent when offline.
+ */
+async function ensureFreshBuild(): Promise<void> {
+  try {
+    if (sessionStorage.getItem('fw-refreshed')) return
+    const running = [...document.querySelectorAll('script[type=module][src]')]
+      .map((s) => (s as HTMLScriptElement).src)
+      .pop()
+    if (!running) return
+    const html = await (await realFetch(location.pathname, { cache: 'no-store' })).text()
+    const served = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(html)?.[1]
+    if (!served || running.includes(served)) return
+    sessionStorage.setItem('fw-refreshed', '1')
+    location.replace(`${location.pathname}?r=${Date.now()}${location.hash}`)
+  } catch {
+    /* offline or blocked — keep running what we have */
+  }
+}
+void ensureFreshBuild()
+
 const app = new App()
 app.start()
 // e2e test hook — exposes teleport/join/state helpers
