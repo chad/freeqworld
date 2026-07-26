@@ -93,8 +93,14 @@ const AGENTS = [
     persona: 'The Cartographer',
     brain: (ctx) => {
       if (/quest/i.test(ctx.text)) {
-        ctx.issueQuest(ctx.from, false, questKind(ctx.text))
-        return `i've sent you a sealed envelope, ${ctx.from}. check your DMs.`
+        // issueQuest returns the brief it sent — or a refusal, when there is no
+        // room quiet enough to rekindle or nobody new to escort. Announcing an
+        // envelope that was never sealed is the interface lying about the world.
+        const result = ctx.issueQuest(ctx.from, false, questKind(ctx.text))
+        const refused = typeof result === 'string' && !/^(COURIER RUN|SURVEY|REKINDLE|ESCORT|your envelope)/.test(result)
+        return refused
+          ? result
+          : `i've sent you a sealed envelope, ${ctx.from}. check your DMs.`
       }
       const top = ctx.directory.slice(0, 6).map((d) => `${d.name} (${d.count})`).join(', ')
       return `every room in the world is a real channel on this server. the liveliest right now: ${top}. say "quest" and i will put you to work.`
