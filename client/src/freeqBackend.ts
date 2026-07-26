@@ -17,6 +17,12 @@ import { decodeTouchTag, encodeTouchTag, TOUCH_TAG } from './sparks'
 const WHERE_TAG = '+freeq.at/where'
 const HERE_TAG = '+freeq.at/here'
 
+/** Is this tag part of a `freeq.at/act` action (incl. its signature)? */
+function isActTag(name: string): boolean {
+  const n = name.replace(/^\+?freeq\.at\//, '')
+  return n === 'act' || n.startsWith('act-') || n === 'sig'
+}
+
 export interface BackendOptions {
   serverUrl: string // wss://irc.freeq.at/irc
   channel: string
@@ -45,6 +51,8 @@ export interface BackendOptions {
   onAuthError?: (reason: string) => void
   /** this identity's web-token was minted on THIS page load and is unspent */
   freshWebToken?: boolean
+  /** a signed `freeq.at/act` action arrived on the wire (offer/claim/complete…) */
+  onAct?: (fromNick: string, tags: Record<string, string>) => void
   /** someone's away state changed */
   onAway?: (nick: string, away: boolean) => void
 }
@@ -270,6 +278,13 @@ export class FreeqBackend {
         }
         const here = parsed.tags[HERE_TAG] ?? parsed.tags[HERE_TAG.slice(1)]
         if (here) this.opts.onHere?.(nickFrom, here)
+      }
+
+      // a signed action rode in on this TAGMSG — same wire format agents use
+      if (nickFrom && nickFrom !== this.client.nick) {
+        const act: Record<string, string> = {}
+        for (const [k, v] of Object.entries(parsed.tags)) if (isActTag(k)) act[k] = v
+        if (act['+freeq.at/act'] ?? act['freeq.at/act'] ?? act.act) this.opts.onAct?.(nickFrom, act)
       }
 
       const value = parsed.tags[POS_TAG] ?? parsed.tags[POS_TAG.slice(1)]
@@ -520,6 +535,16 @@ export class FreeqBackend {
 
   sendReaction(channel: string, targetMessage: string, reaction: string): void {
     this.client.sendReaction(channel, reaction, targetMessage)
+  }
+
+  /** Post a signed `freeq.at/act` action into the room. The channel it lands in
+   *  IS the queue — exactly how an agent posts claimable work. */
+  sendAct(channel: string, tags: Record<string, string>): void {
+    try {
+      this.client.sendTagmsg(channel, tags)
+    } catch {
+      /* not connected */
+    }
   }
 
   /** Ask a peer which room they're in (they answer over a nick-targeted TAGMSG). */

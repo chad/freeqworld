@@ -10,6 +10,7 @@
 // Seeds persist in .agents/ so each agent keeps its DID (and thus its face).
 
 import { FreeqClient } from '@freeq/sdk'
+import { actTags, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
 import nacl from 'tweetnacl'
 import { hkdfSync, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -378,6 +379,50 @@ for (const [i, agent] of AGENTS.entries()) {
       if (target) watchers.set(target, Date.now())
     }
   })
+
+  // ── Open work, posted as real `freeq.at/act` handoffs ────────────────────
+  //
+  // Reuse, not reinvent: a courier run IS a handoff — a unit of work offered,
+  // claimed, and completed. So these are `act=handoff` with the RFC's own verb
+  // set, signed with the agent's ed25519 key over the same canonical the Rust
+  // implementation uses. An open offer carries no `act-to`: unassigned is the
+  // natural encoding of unassigned, and the channel it lands in is the queue.
+  //
+  // They ride TAGMSG, so a conventional IRC client sees nothing at all.
+  const OPEN_RUNS = [
+    { caps: 'freeq.at/courier', title: 'Courier run — carry a sealed phrase to another room' },
+    { caps: 'freeq.at/survey', title: 'Survey — chart a room and report its topic' },
+    { caps: 'freeq.at/rekindle', title: 'Rekindle — speak first in a room gone quiet' },
+    { caps: 'freeq.at/escort', title: 'Escort — make a newcomer welcome' },
+  ]
+  const openOffers = new Map() // caps -> act-id, so the board sees stable ids
+
+  const postOpenOffers = () => {
+    if (agent.nick !== 'cartographer') return
+    for (const run of OPEN_RUNS) {
+      const id = openOffers.get(run.caps) ?? ulid()
+      openOffers.set(run.caps, id)
+      const tags = actTags({
+        kind: 'handoff',
+        verb: 'offer',
+        id,
+        from: did,
+        title: run.title,
+        caps: run.caps,
+      })
+      tags[ACT_SIG_TAG] = signAct(tags, kp.secretKey, kp.publicKey)
+      for (const ch of CHANNELS) {
+        try {
+          client.sendTagmsg(ch, tags)
+        } catch { /* not connected yet */ }
+      }
+    }
+  }
+
+  // Re-post periodically: TAGMSGs are ephemeral and never enter CHATHISTORY,
+  // so a client that just arrived has to hear the offers fresh.
+  client.on('ready', () => setTimeout(postOpenOffers, 3000))
+  setInterval(postOpenOffers, 90_000)
 
   let seq = 0
   setInterval(() => {

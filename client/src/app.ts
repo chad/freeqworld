@@ -18,6 +18,8 @@ import { signTouch, SparkBook, titleFor, verifyTouch } from './sparks'
 import { wrapBubble } from './textwrap'
 import { decryptMessage, deriveRoomKey, encryptMessage, type CipherEnvelope } from './vaultCrypto'
 import { familiarFor, imageUrlsIn, threadsOf, type ThreadPlace } from './worldExtras'
+import { actTags, signAct, verifyAct, ACT_SIG_TAG } from '../../shared/src/act'
+import { publicKeyFromDid } from '../../shared/src/signing'
 import {
   drawContactShadow,
   drawFloorTile,
@@ -264,6 +266,7 @@ export class App {
         onTouch: (fromNick, ts, sig, signerDid) => this.onTouchIn(fromNick, ts, sig, signerDid),
         onTouchObserved: (fromNick, toNick) => this.onTouchObserved(fromNick, toNick),
         onHere: (nick, channel) => this.onHere(nick, channel),
+        onAct: (nick, tags) => void this.onAct(nick, tags),
         onTyping: (nick, isTyping) => {
           if (isTyping) this.typingNicks.set(nick.toLowerCase(), performance.now() + 6000)
           else this.typingNicks.delete(nick.toLowerCase())
@@ -1065,6 +1068,28 @@ export class App {
       ['rekindle', 'Rekindle', 'Speak first in a room that has been silent for over a day.'],
       ['escort', 'Escort', 'Greet a newcomer by name and draw a reply out of them. Pays double.'],
     ]
+    // Real `freeq.at/act` handoffs heard on the wire. Same wire format an agent
+    // work queue uses — these aren't a menu, they're signed offers.
+    const live = [...this.openActs.values()].sort((a, b) => a.ts - b.ts)
+    if (live.length) {
+      rows.push('<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:4px">')
+      rows.push('<div style="color:var(--dim);font-size:.78rem;margin-bottom:4px">Open handoffs on the wire</div>')
+      for (const a of live) {
+        const badge = a.verified
+          ? '<span style="color:var(--green)">◈ sig VERIFIED</span>'
+          : '<span style="color:var(--dim)">unverified</span>'
+        rows.push(
+          `<div style="padding:4px 0">` +
+            `<button data-act="${escapeHtml(a.id)}">claim</button>` +
+            `<b style="color:var(--cyan);margin-left:6px">${escapeHtml(a.title)}</b>` +
+            `<div style="color:var(--dim);font-size:.76rem;margin-left:2px">` +
+            `offered by ${escapeHtml(a.nick)} · ${badge} · <code>${escapeHtml(a.caps)}</code></div>` +
+            `</div>`,
+        )
+      }
+      rows.push('</div>')
+    }
+
     rows.push('<div style="border-top:1px solid var(--border);padding-top:6px">')
     for (const [id, label, desc] of offers) {
       rows.push(`<div style="padding:4px 0">
@@ -1074,7 +1099,7 @@ export class App {
       </div>`)
     }
     rows.push('</div>')
-    rows.push('<div style="color:var(--dim);font-size:.76rem;margin-top:6px">Claiming sends a real DM to an agent that is a real client on this server. Delivery is verified in the real channel.</div>')
+    rows.push('<div style="color:var(--dim);font-size:.76rem;margin-top:6px">Claiming posts a signed <code>freeq.at/act</code> handoff — the same wire format agents coordinate with — and DMs the Cartographer, a real client that verifies the work in the real channel.</div>')
     body.innerHTML = rows.join('')
 
     for (const b of body.querySelectorAll<HTMLElement>('[data-claim]')) {
@@ -1087,6 +1112,11 @@ export class App {
         el('objcard').classList.add('hidden')
         this.toast('✉ the Cartographer is sealing your envelope…')
       })
+    }
+    // Claiming a live offer posts a real signed `claim` that references the
+    // offer's act-id — the same transition an agent would send.
+    for (const b of body.querySelectorAll<HTMLElement>('[data-act]')) {
+      b.addEventListener('click', () => void this.claimAct(b.dataset.act!))
     }
     for (const b of body.querySelectorAll<HTMLElement>('[data-go]')) {
       b.addEventListener('click', () => {
@@ -1901,6 +1931,67 @@ export class App {
   private followTarget: string | null = null
   /** the courier run currently in hand, parsed from the Cartographer's brief */
   private activeQuest: { phrase: string; target: string } | null = null
+
+  /** Live `freeq.at/act` handoffs seen on the wire, by act-id. These are real
+   *  signed actions from whoever posted them — an agent's open work queue and
+   *  the player's quest board are the same object. */
+  private openActs = new Map<string, { id: string; title: string; caps: string; from: string; nick: string; verified: boolean; ts: number }>()
+
+  /** Take an open handoff: sign a `claim` with the browser's device key (a
+   *  did:key, so anyone in the room can verify it without a lookup), post it
+   *  to the channel that is the queue, and ask the Cartographer for the work. */
+  private async claimAct(actId: string): Promise<void> {
+    const offer = this.openActs.get(actId)
+    const conn = this.conn
+    if (!offer || !conn || !('sendAct' in conn)) return
+    if (!this.identity) {
+      this.toast('pick a name first — claims are signed')
+      return
+    }
+    const tags = actTags({
+      kind: 'handoff',
+      verb: 'claim',
+      id: offer.id,
+      from: this.identity.device_did,
+      title: offer.title,
+      caps: offer.caps,
+      ref: offer.id,
+    })
+    tags[ACT_SIG_TAG] = await signAct(tags, this.identity.keypair.secretKey, this.identity.keypair.publicKey)
+    ;(conn as FreeqBackend).sendAct(this.channel, tags)
+    // the agent verifies the actual work over the existing DM flow
+    const kind = offer.caps.split('/').pop() ?? 'courier'
+    ;(conn as FreeqBackend).sendDm('cartographer', kind === 'courier' ? 'quest' : `quest ${kind}`)
+    el('objcard').classList.add('hidden')
+    this.toast(`⚙ claimed — signed handoff ${offer.id.slice(0, 8)}… posted to ${this.channel}`)
+    this.audio.stinger('spark')
+  }
+
+  private async onAct(nick: string, tags: Record<string, string>): Promise<void> {
+    const get = (k: string) => tags[`+freeq.at/${k}`] ?? tags[`freeq.at/${k}`] ?? tags[k]
+    if (get('act') !== 'handoff') return
+    const id = get('act-id')
+    const from = get('act-from')
+    if (!id || !from) return
+    // A did:key carries its own public key, so a signature is checkable right
+    // here with no lookup. (did:plc would need key resolution we don't have.)
+    let verified = false
+    const sig = tags[ACT_SIG_TAG] ?? tags['freeq.at/sig']
+    if (sig && from.startsWith('did:key:')) {
+      try {
+        verified = (await verifyAct(tags, sig, publicKeyFromDid(from))).ok
+      } catch {
+        verified = false
+      }
+    }
+    const verb = get('act-verb')
+    if (verb === 'offer') {
+      this.openActs.set(id, { id, title: get('act-title') ?? 'untitled work', caps: get('act-caps') ?? '', from, nick, verified, ts: Date.now() })
+    } else if (verb === 'claim' || verb === 'complete' || verb === 'cancel') {
+      if (verb !== 'claim') this.openActs.delete(id)
+      if (!(this.conn && 'nick' in this.conn && nick === this.conn.nick)) this.toast(`⚙ ${nick} ${verb}ed “${get('act-title') ?? id.slice(0, 8)}”${verified ? ' · sig VERIFIED' : ''}`)
+    }
+  }
 
   private onHere(nick: string, channel: string): void {
     if (this.followTarget !== nick.toLowerCase()) return
