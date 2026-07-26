@@ -43,9 +43,9 @@ The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
   so this vhost has no backend. The **one-tap** path additionally calls the auth
   broker (below).
 
-  ### Shareable identity pages (`/u/`, `/card/`, `/theme/`, `/stinger/`)
+  ### Shareable identity pages (`/u/`, `/card/`, `/theme/`, `/stinger/`, `/clip/`)
 
-  These four prefixes on `pfp.freeq.at` are **NOT static** — they are proxied to
+  These five prefixes on `pfp.freeq.at` are **NOT static** — they are proxied to
   the town server (miren router on `127.0.0.1:8090`, `Host: world.freeq.at`) by a
   `location ~ ^/(u|card|theme|stinger)/` block in the vhost. Per-person
   OpenGraph tags can't come from a static SPA: crawlers don't run JS, so every
@@ -61,9 +61,41 @@ The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
   gets rejected by crawlers. One canonical domain also means one cached card
   per person.
 
-  Verify a change with Bluesky's own extractor, which is public:
+  `/?u=<handle>` unfurls per-profile too (it's the app's own address-bar URL).
+  nginx routes it via `error_page 418 = @share` + `if ($arg_u) { return 418; }` —
+  `return` is the only safe statement inside `if`, and the named location must
+  use `proxy_pass ...$uri$is_args$args` because a bare `proxy_pass` under `if`
+  **silently drops the query string**.
+
+  ⚠ **`pfp/` must be built TWICE and both targets deployed together.** vite's
+  asset hashes depend on the base, so `pfp/dist` (`/id/`) and `pfp/dist-root`
+  (`/`) reference differently-named bundles. `/u/` injects OpenGraph tags into
+  whichever index.html matches the requesting path, so the bundle it points at
+  must be the one that host actually serves:
   ```sh
+  miren deploy -C freeq                      # builds BOTH (see .miren/app.toml)
+  npx vite build pfp --base=/ --outDir=dist-root
+  rsync -az --delete pfp/dist-root/ root@87.99.152.98:/var/www/pfp/
+  ```
+  Skipping the rsync leaves shared links pointing at a hash nginx doesn't have —
+  the SPA fallback answers with HTML and the module load fails (blank page).
+
+  `/clip/<handle>.mp4` is a 12-second video of the character moving to their
+  theme, **with sound** — Discord, Telegram, Mastodon and iMessage play
+  `og:video` inline; Bluesky and X ignore it and fall back to the image, so both
+  are always advertised. Encoded by `ffmpeg-static`, an **optionalDependency**:
+  if the binary is missing the clip routes 404 and `og:video` is omitted, which
+  is how it behaved before clips existed. Media responses honour byte ranges
+  (206 + `Content-Range`) — video players probe with a Range request and refuse
+  a 200 carrying the whole file.
+
+  Verify a change with the platforms' own fetch patterns:
+  ```sh
+  # exactly what Bluesky will show (public service)
   curl -s "https://cardyb.bsky.app/v1/extract?url=https%3A%2F%2Fpfp.freeq.at%2Fu%2Fbsky.app"
+  # what Discord/Telegram do: read og:video, then range-probe it
+  curl -s -A Discordbot/2.0 https://pfp.freeq.at/u/bsky.app | grep og:video
+  curl -s -r 0-99 -o /dev/null -w '%{http_code}\n' https://pfp.freeq.at/clip/bsky.app.mp4  # 206
   ```
 
   Since 2026-07-25 the reveal also **plays the visitor's theme tune** (the
