@@ -68,7 +68,12 @@ export function helpHtml(ctx: HelpContext): string {
     <div style="margin-top:8px">
       ${QUEST_KINDS.map((q) => `
         <div style="border-left:2px solid var(--border);padding:4px 0 4px 8px;margin-bottom:8px">
-          <div><b>${esc(q.label)}</b> <span style="color:var(--amber)">${q.xp}${q.alwaysDouble ? ' × 2' : ''} XP</span></div>
+          <div><b>${esc(q.label)}</b> <span style="color:var(--amber)">${q.xp}${q.alwaysDouble ? ' × 2' : ''} XP</span>
+            <span style="color:var(--dim);font-size:.78rem">${
+              q.trust === 'oracle' ? '· trusts an oracle'
+                : q.trust === 'self-signed' ? '· needs no third party'
+                : '· witnessed in-channel'
+            }</span></div>
           <div style="font-size:.84rem;margin-top:2px"><code>${esc(q.ask)}</code></div>
           <div style="color:var(--dim);font-size:.84rem">${esc(q.doThis)}</div>
           <div style="color:var(--dim);font-size:.8rem;font-style:italic">${esc(q.witnessedBy)}</div>

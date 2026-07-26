@@ -64,8 +64,12 @@ describe('external actions declare their trust tier', () => {
   const EXTERNAL = ['face', 'post', 'commit', 'referral']
 
   it('marks exactly one action as oracle-attested', () => {
-    const oracles = QUEST_KINDS.filter((q) => /oracle/i.test(q.witnessedBy))
-    expect(oracles.map((q) => q.id)).toEqual(['commit'])
+    // asserted on the declared tier, not on the prose — the face quest's
+    // description contains the word "oracle" precisely because it needs NONE
+    expect(QUEST_KINDS.filter((q) => q.trust === 'oracle').map((q) => q.id)).toEqual(['commit'])
+    expect(QUEST_KINDS.filter((q) => q.trust === 'self-signed').map((q) => q.id).sort())
+      .toEqual(['face', 'post', 'referral'])
+    for (const q of QUEST_KINDS) expect(['witnessed', 'self-signed', 'oracle']).toContain(q.trust)
   })
 
   it('says where the evidence comes from for every external action', () => {

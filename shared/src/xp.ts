@@ -118,11 +118,21 @@ export interface QuestKind {
   witnessedBy: string
   xp: number
   alwaysDouble?: boolean
+  /**
+   * How much trust the verification needs — the taxonomy, made machine-readable
+   * so it can be displayed and tested rather than inferred from prose:
+   *   witnessed   an agent saw it happen in a real channel
+   *   self-signed no third party at all: hashes, or records in the actor's own
+   *               signed repo
+   *   oracle      somebody else is asked, and the attestation records who
+   */
+  trust: 'witnessed' | 'self-signed' | 'oracle'
 }
 
 export const QUEST_KINDS: QuestKind[] = [
   {
     id: 'courier',
+    trust: 'witnessed',
     label: 'Courier run',
     ask: 'cartographer, quest',
     doThis: 'it DMs you a sealed phrase and a room — go there and say the phrase aloud',
@@ -131,6 +141,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'survey',
+    trust: 'witnessed',
     label: 'Survey',
     ask: 'cartographer, quest survey',
     doThis: "read the named room's topic, then DM the Cartographer what it says",
@@ -139,6 +150,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'rekindle',
+    trust: 'witnessed',
     label: 'Rekindle',
     ask: 'cartographer, quest rekindle',
     doThis: 'go to the room it names — one that has genuinely been silent for over a day — and say something worth answering',
@@ -148,6 +160,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'commit',
+    trust: 'oracle',
     label: 'Land a commit',
     ask: 'cartographer, quest commit owner/repo',
     doThis: 'put the phrase it gives you in a commit message and push it',
@@ -156,6 +169,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'post',
+    trust: 'self-signed',
     label: 'Post your standing',
     ask: 'cartographer, quest post',
     doThis: 'put the link it gives you in a Bluesky post, then say "posted"',
@@ -164,6 +178,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'face',
+    trust: 'self-signed',
     label: 'Wear your face',
     ask: 'cartographer, quest face',
     doThis: 'set your Bluesky avatar to the character your DID derives — the ID app does it in one tap',
@@ -172,6 +187,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'referral',
+    trust: 'self-signed',
     label: 'Referral',
     ask: 'cartographer, quest referral',
     doThis: 'it DMs you an invite link — give it to someone who has never been here, and the run completes when they arrive and speak',
@@ -181,6 +197,7 @@ export const QUEST_KINDS: QuestKind[] = [
   },
   {
     id: 'escort',
+    trust: 'witnessed',
     label: 'Escort',
     ask: 'cartographer, quest escort',
     doThis: 'greet the newcomer it names BY NAME in their room, and draw a reply out of them',
