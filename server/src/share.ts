@@ -21,8 +21,12 @@ import { renderScore } from '../../music/src/synth.ts'
 import { encodeWav } from '../../music/src/wav.ts'
 import { deriveStinger } from '../../music/src/motif.ts'
 import { CLIP_H, CLIP_W, clipFor, ffmpeg } from './clip.ts'
+import { completionsFromEvents, creditedXp, levelFor } from '../../shared/src/xp'
+import type { CardStanding } from './card.ts'
 
 const APPVIEW = 'https://public.api.bsky.app/xrpc'
+/** the freeq server that holds the signed completion log */
+const IRC_HTTP = process.env.FREEQ_HTTP ?? 'https://irc.freeq.at'
 
 export interface Identity {
   did: string
@@ -67,10 +71,34 @@ function shortDid(did: string): string {
   return did.length > 24 ? `${did.slice(0, 16)}.${did.slice(-4)}` : did
 }
 
+/** Standing for the card and the page, from the same public signed log the
+ *  obelisk reads. A card that shows a level is a card worth posting. */
+export async function standingFor(did: string): Promise<CardStanding | null> {
+  try {
+    const events: unknown[] = []
+    for (const ch of ['#general', '#lobby', '#dev']) {
+      const r = await fetch(
+        `${IRC_HTTP}/api/v1/channels/${encodeURIComponent(ch)}/events?type=quest_complete&limit=500`,
+        { signal: AbortSignal.timeout(5000) },
+      )
+      if (!r.ok) continue
+      const body = (await r.json()) as { events?: unknown[] }
+      events.push(...(body.events ?? []))
+    }
+    const completions = (await completionsFromEvents(events as never)).filter((c) => c.player === did)
+    if (!completions.length) return null
+    const xp = creditedXp(completions)
+    const lv = levelFor(xp)
+    return { level: lv.level, title: lv.title, xp, runs: completions.filter((c) => c.verified).length }
+  } catch {
+    return null
+  }
+}
+
 export async function cardPng(id: Identity): Promise<Buffer> {
   const hit = cardCache.get(id.did)
   if (hit && Date.now() - hit.at < TTL) return hit.png
-  const { png } = await renderCard(id.did, id.label.toUpperCase())
+  const { png } = await renderCard(id.did, id.label.toUpperCase(), await standingFor(id.did))
   cardCache.set(id.did, { png, at: Date.now() })
   if (cardCache.size > 500) cardCache.delete(cardCache.keys().next().value!)
   return png
@@ -121,7 +149,10 @@ export async function appPageWithOg(
   const c = Object.fromEntries(minted.card)
   const who = id.label
   const slug = encodeURIComponent(id.handle || id.did)
-  const title = `${who} in FreeqWorld \u2726 ${c.key}, ${c.tempo}`
+  const standing = await standingFor(id.did)
+  const title = standing
+    ? `${who} in FreeqWorld \u2726 level ${standing.level} ${standing.title} \u00b7 ${c.key}, ${c.tempo}`
+    : `${who} in FreeqWorld \u2726 ${c.key}, ${c.tempo}`
   const desc =
     `${who}'s character and their theme tune, both derived from their DID \u2014 ` +
     `${c.key}, ${c.tempo}, ${c.motif} on ${c.voice}, ${c.bass} bass, ${c.percussion}. ` +

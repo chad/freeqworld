@@ -129,8 +129,15 @@ export interface Card {
   avatar: Avatar
 }
 
+export interface CardStanding {
+  level: number
+  title: string
+  xp: number
+  runs: number
+}
+
 /** `label` is the handle (or a short DID) shown as the headline. */
-export async function renderCard(did: string, label: string): Promise<Card> {
+export async function renderCard(did: string, label: string, standing?: CardStanding | null): Promise<Card> {
   const avatar = await deriveAvatar(did)
   const minted = await mintChiptune(did, 32)
   const bd = backdrop(avatar)
@@ -202,6 +209,16 @@ export async function renderCard(did: string, label: string): Promise<Card> {
   }
 
   // the melody itself
+  // standing, when they have any: the shared card carries the flex
+  if (standing && standing.runs > 0) {
+    const badge = `L${standing.level} ${standing.title.toUpperCase()}`
+    const w = textWidth(badge, 3, 2) + 26
+    fillRect(bmp, rx, cy - 4, w, 40, accent, 0.9)
+    drawText(bmp, badge, rx + 13, cy + 6, INK, { scale: 3, tracking: 2 })
+    const runs = `${standing.runs} WITNESSED RUN${standing.runs === 1 ? '' : 'S'}`
+    drawText(bmp, `${standing.xp} XP - ${runs}`, rx + w + 16, cy + 6, DIM, { scale: 2, tracking: 1 })
+    cy += 46
+  }
   drawText(bmp, 'THEIR MELODY, FIRST EIGHT BARS', rx, cy + 6, DIM, { scale: 2, tracking: 1 })
   drawRoll(bmp, minted, rx, cy + 28, PANEL_W, 120, accent, bd)
   drawText(bmp, 'PRESS PLAY TO HEAR IT', rx, cy + 166, accent, { scale: 3, tracking: 2 })

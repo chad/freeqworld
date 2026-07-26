@@ -6,7 +6,7 @@ import { LEVELS, QUEST_KINDS } from './xp'
 // rekindle required a day of silence when nothing checked for it.
 describe('the quest catalogue the help page renders', () => {
   it('describes every run the witness can actually confirm', () => {
-    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'face', 'referral', 'escort'])
+    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'post', 'face', 'referral', 'escort'])
   })
 
   it('pays most for bringing a new identity in', () => {
@@ -37,6 +37,9 @@ describe('the quest catalogue the help page renders', () => {
   it('claims a witness for each run, and no unwitnessable work', () => {
     const claims = QUEST_KINDS.map((q) => q.witnessedBy.toLowerCase()).join(' ')
     expect(claims).toMatch(/member of that channel|register|timestamps|both halves|witnessed/)
+    // the outward-facing runs must say where the evidence comes from
+    expect(QUEST_KINDS.find((q) => q.id === 'post')!.witnessedBy).toMatch(/your own repo/)
+    expect(QUEST_KINDS.find((q) => q.id === 'post')!.witnessedBy).toMatch(/once, ever/)
     // the face quest must advertise that it needs no oracle at all
     expect(QUEST_KINDS.find((q) => q.id === 'face')!.witnessedBy).toMatch(/no oracle/)
     // nothing may claim to be verified "automatically" or by the client

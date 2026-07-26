@@ -51,6 +51,9 @@ const LADDER_FOR_KIND: Record<string, Ladder> = {
 /** Weighted by how hard the work is to fake, not by how long it takes.
  *  An escort needs a stranger to voluntarily answer, so it pays most. */
 const XP_BY_KIND: Record<string, number> = {
+  // posting your standing: read out of the player's OWN repo (their PDS, not an
+  // aggregator). Paid once ever — paying for repeat posts would make us spam.
+  post: 25,
   // an external action, verified with no oracle at all: your Bluesky avatar is
   // the exact bytes your DID derives (server/src/face.ts + shared/src/cid.ts).
   // A one-off achievement, so it scores but has no ladder.
@@ -139,6 +142,14 @@ export const QUEST_KINDS: QuestKind[] = [
     witnessedBy: 'the silence is measured from real message timestamps; only a dead room can be offered',
     xp: XP_BY_KIND.rekindle!,
     alwaysDouble: true,
+  },
+  {
+    id: 'post',
+    label: 'Post your standing',
+    ask: 'cartographer, quest post',
+    doThis: 'put the link it gives you in a Bluesky post, then say "posted"',
+    witnessedBy: "read out of your own repo on the PDS you chose — not out of anyone's feed — and it pays once, ever",
+    xp: XP_BY_KIND.post!,
   },
   {
     id: 'face',

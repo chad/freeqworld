@@ -65,9 +65,9 @@ const POS_TAG = '+freeq.at/world-pos'
 
 /** Which run the courier asked for. Defaults to the classic courier run. */
 function questKind(text) {
-  const m = /quest\s+(survey|rekindle|escort|referral|invite|face|avatar)/i.exec(text)
+  const m = /quest\s+(survey|rekindle|escort|referral|invite|face|avatar|post|share)/i.exec(text)
   const kind = m ? m[1].toLowerCase() : 'courier'
-  return kind === 'invite' ? 'referral' : kind === 'avatar' ? 'face' : kind
+  return kind === 'invite' ? 'referral' : kind === 'avatar' ? 'face' : kind === 'share' ? 'post' : kind
 }
 
 const AGENTS = [
@@ -96,6 +96,15 @@ const AGENTS = [
     nick: 'cartographer',
     persona: 'The Cartographer',
     brain: (ctx) => {
+      // holding a post run and telling us it's up
+      if (/\b(posted|shared|done)\b/i.test(ctx.text)) {
+        const held = ctx.heldQuest?.(ctx.from)
+        const who = ctx.didFor?.(ctx.from)
+        if (held?.kind === 'post' && who) {
+          ctx.verifyPost(ctx.from, who, held)
+          return `checking your feed for it now, ${ctx.from}.`
+        }
+      }
       if (/quest/i.test(ctx.text)) {
         // issueQuest returns the brief it sent — or a refusal, when there is no
         // room quiet enough to rekindle or nobody new to escort. Announcing an
@@ -115,7 +124,7 @@ const AGENTS = [
       const surveyed = ctx.trySurvey(ctx.from, ctx.text)
       if (surveyed) return surveyed
       if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
-      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, or "quest referral" for an invite that carries your name — real work, verified in the real channel.`
+      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, "quest referral" for an invite that carries your name, "quest face" to prove you wear the character your DID derives, or "quest post" to put your standing where people can see it — real work, verified in the real channel.`
     },
   },
 ]
@@ -253,6 +262,30 @@ for (const [i, agent] of AGENTS.entries()) {
         return `every room i watch has been spoken in today, ${nick} — nothing to rekindle. say "quest" for a courier run, or come back when somewhere has gone quiet.`
       }
       q = { kind: 'rekindle', target: stale, bonus: true, quietHours: Math.floor(quietForMs(stale) / 3600_000) }
+    } else if (kind === 'post') {
+      const player = client.getDidForNick?.(nick)
+      if (!player) {
+        try { client.whois(nick) } catch { /* offline */ }
+        return `i need to know your DID first, ${nick} — ask again in a moment.`
+      }
+      if (!player.startsWith('did:plc:') && !player.startsWith('did:web:')) {
+        return `that run needs a real AT Protocol identity, ${nick} — sign in with your Bluesky handle and ask again.`
+      }
+      if (creditedReferrals.has(`post|${player}`)) {
+        return `you've already posted your standing, ${nick} — that one pays once, and once is enough. i'm not in the business of making you spam your friends.`
+      }
+      const held = quests.get(nick.toLowerCase())
+      if (held?.kind === 'post') {
+        void verifyStandingPost(nick, player, held)
+        return `checking your feed for it now, ${nick}.`
+      }
+      const nonce = Math.random().toString(36).slice(2, 8).toUpperCase()
+      const handleGuess = nick.replace(/-[a-z0-9]{6,}$/, '')
+      const link = `https://pfp.freeq.at/u/${handleGuess}?n=${nonce}`
+      quests.set(nick.toLowerCase(), { kind: 'post', target: CHANNELS[0], nonce, link, bonus: false })
+      saveQuests()
+      console.log(`[${agent.nick}] post quest issued: ${nick} nonce ${nonce}`)
+      return `POST YOUR STANDING, ${nick}: put this link in a Bluesky post — ${link} — then say "cartographer, posted". i read it out of your own repo, not out of anyone's feed, so the nonce in the link is how i know it's this run. it pays once.`
     } else if (kind === 'face') {
       // nothing to hold in a ledger: this is checkable at any moment, so we
       // check it now and attest if it is already true
@@ -399,6 +432,78 @@ for (const [i, agent] of AGENTS.entries()) {
     }
     if (seen.has(String(redeemer).toLowerCase())) return { ok: false, reason: 'already-known', payload }
     return { ok: true, payload }
+  }
+
+  // -- "post your standing" ---------------------------------------------------
+  //
+  // Verified in the player's OWN repo, not in an aggregator: we resolve their DID
+  // document to the PDS they chose and read the records from there. The nonce
+  // rides inside the link (`?n=...`) so the post stays clean and the URL is the
+  // thing worth sharing anyway.
+  //
+  // Paid ONCE, ever -- never per day. Rewarding repeat posts would be the
+  // outward version of paying for chatter, and it would make us a spammer.
+  const resolvePdsFor = async (playerDid) => {
+    if (playerDid.startsWith('did:plc:')) {
+      const r = await fetch(`https://plc.directory/${encodeURIComponent(playerDid)}`)
+      if (!r.ok) throw new Error('cannot resolve identity document')
+      const doc = await r.json()
+      const svc = (doc.service ?? []).find(
+        (x) => String(x.id ?? '').endsWith('#atproto_pds') || x.type === 'AtprotoPersonalDataServer',
+      )
+      if (!svc?.serviceEndpoint) throw new Error('no PDS in identity document')
+      return String(svc.serviceEndpoint).replace(/\/$/, '')
+    }
+    if (playerDid.startsWith('did:web:')) {
+      const domain = playerDid.slice('did:web:'.length).replace(/:/g, '/')
+      const r = await fetch(`https://${domain}/.well-known/did.json`)
+      if (!r.ok) throw new Error('cannot resolve did:web document')
+      const doc = await r.json()
+      const svc = (doc.service ?? []).find((x) => String(x.id ?? '').endsWith('#atproto_pds'))
+      return String(svc?.serviceEndpoint ?? '').replace(/\/$/, '')
+    }
+    throw new Error('unsupported DID method')
+  }
+
+  /** Look for the nonce in their own repo. Returns the post URI, or null. */
+  const findStandingPost = async (playerDid, nonce) => {
+    const pds = await resolvePdsFor(playerDid)
+    const r = await fetch(
+      `${pds}/xrpc/com.atproto.repo.listRecords?repo=${encodeURIComponent(playerDid)}` +
+      `&collection=app.bsky.feed.post&limit=30`,
+    )
+    if (!r.ok) throw new Error(`their PDS said ${r.status}`)
+    const body = await r.json()
+    for (const rec of body.records ?? []) {
+      const hay = [
+        String(rec?.value?.text ?? ''),
+        String(rec?.value?.embed?.external?.uri ?? ''),
+        JSON.stringify(rec?.value?.facets ?? ''),
+      ].join(' ')
+      if (hay.includes(nonce)) return { uri: String(rec.uri ?? ''), pds }
+    }
+    return null
+  }
+
+  /** Read their own repo and look for the link we issued. */
+  const verifyStandingPost = async (nick, player, quest) => {
+    try {
+      const found = await findStandingPost(player, quest.nonce)
+      if (!found) {
+        client.sendMessage(nick, `i can't see it yet, ${nick} — post the link (${quest.link}) and say "posted" again. i read your repo directly, so give it a few seconds to land.`)
+        return
+      }
+      quests.delete(nick.toLowerCase())
+      creditedReferrals.add(`post|${player}`)
+      saveQuests()
+      saveInvites()
+      console.log(`[${agent.nick}] post verified for ${player.slice(0, 24)}… (${found.uri})`)
+      attestCompletionForDid(player, 'post', CHANNELS[0], false)
+      client.sendMessage(nick, `found it in your own repo at ${found.pds} — verified, ${nick}. that one pays once; thank you for the words.`)
+    } catch (e) {
+      console.log(`[${agent.nick}] post check failed for ${nick}:`, String(e).slice(0, 120))
+      client.sendMessage(nick, `i couldn't read your repo just now, ${nick} (${String(e).slice(0, 60)}). try me again shortly.`)
+    }
   }
 
   // ── "wear your derived face" ───────────────────────────────────────────────
@@ -563,6 +668,10 @@ for (const [i, agent] of AGENTS.entries()) {
     directory,
     issueQuest,
     trySurvey,
+    // the persona needs these to check a standing post it is told about
+    didFor: (n) => client.getDidForNick?.(n),
+    verifyPost: (n, who, held) => void verifyStandingPost(n, who, held),
+    heldQuest: (n) => quests.get(String(n).toLowerCase()),
   })
 
   const lastReply = new Map()
