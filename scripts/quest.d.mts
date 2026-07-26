@@ -1,13 +1,24 @@
 // Types for the agents' plain-ESM courier bookkeeping, so the regression test
 // (shared/src/quest.test.ts) typechecks. Same arrangement as act.d.mts.
 
+export type QuestKindId =
+  | 'courier' | 'survey' | 'rekindle' | 'escort' | 'post' | 'commit' | 'referral' | 'face'
+
 export interface Quest {
-  kind: 'courier' | 'survey' | 'rekindle' | 'escort'
+  /** absent on entries written before kinds existed — treat as 'courier' */
+  kind?: QuestKindId
   target: string
   phrase?: string
   bonus?: boolean
   newcomer?: string
   courier?: string
+  /** how long the target had been silent when a rekindle was cut */
+  quietHours?: number
+  greeted?: number
+  /** post / commit runs */
+  nonce?: string
+  link?: string
+  repo?: string
 }
 
 export type Ledger = Map<string, Quest>
@@ -54,3 +65,9 @@ export declare function referralCredit(a: {
   text: string
   day: string
 }): { credit: boolean; reason?: string; inviter?: string; key?: string }
+
+export declare const STATELESS_KINDS: string[]
+export declare const SLOT_KINDS: string[]
+export declare function issueDecision(a: { held?: Quest | null; requested?: string }): {
+  action: 'issue' | 'resend' | 'blocked'; kind: string; holding?: string
+}

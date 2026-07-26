@@ -12,8 +12,8 @@
 import { FreeqClient } from '@freeq/sdk'
 import { actTags, actKid, signAct, ulid, ACT_SIG_TAG } from './act.mjs'
 import {
-  deliveryOutcome, existingEnvelope, questCanonical, completionPayload,
-  invitePayload, inviteCanonical, encodeInvite, referralCredit,
+  deliveryOutcome, existingEnvelope, sameCourier, questCanonical, completionPayload,
+  invitePayload, inviteCanonical, encodeInvite, referralCredit, issueDecision,
 } from './quest.mjs'
 import nacl from 'tweetnacl'
 import { createHash, hkdfSync, randomBytes } from 'node:crypto'
@@ -96,6 +96,10 @@ const AGENTS = [
     nick: 'cartographer',
     persona: 'The Cartographer',
     brain: (ctx) => {
+      // tearing up a run you don't want
+      if (/\b(drop|abandon|cancel|forget)\b/i.test(ctx.text)) {
+        return ctx.dropQuests(ctx.from)
+      }
       // holding a post run and telling us it's up
       if (/\b(posted|shared|done|pushed)\b/i.test(ctx.text)) {
         const held = ctx.heldQuest?.(ctx.from)
@@ -128,7 +132,7 @@ const AGENTS = [
       const surveyed = ctx.trySurvey(ctx.from, ctx.text)
       if (surveyed) return surveyed
       if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
-      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, "quest referral" for an invite that carries your name, "quest face" to prove you wear the character your DID derives, or "quest post" to put your standing where people can see it — real work, verified in the real channel.`
+      return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, "quest referral" for an invite that carries your name, "quest face" to prove you wear the character your DID derives, "quest post" to put your standing where people can see it, or "quest drop" if you want out of the one you're holding — real work, verified in the real channel.`
     },
   },
 ]
@@ -234,17 +238,23 @@ for (const [i, agent] of AGENTS.entries()) {
     // quieter rooms pay double — couriers carry life where there is none
     const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
     const quietest = ranked[0] ?? CHANNELS[0]
-    // Idempotent: a pending run is re-sent, never replaced — DM replays on
-    // reconnect (or an impatient courier) must not invalidate the envelope.
-    // That now includes a run sealed for them under a DIFFERENT nick: a player
-    // whose nick changed between sessions was getting a second phrase for the
-    // same room and could only ever confirm one of them.
-    const existing = quests.get(nick.toLowerCase())
+    // A pending run is re-sent, never replaced — DM replays on reconnect must not
+    // invalidate an envelope. But that check used to run BEFORE the requested
+    // kind was looked at, so someone holding a courier envelope got it back no
+    // matter what they asked for, forever. The decision is now kind-aware and
+    // lives in scripts/quest.mjs so it is tested.
+    const held = quests.get(nick.toLowerCase())
       ?? (kind === 'courier' ? existingEnvelope(quests, nick, quietest)?.quest : null)
-    if (existing) {
-      const reminder = `your envelope is still sealed, ${nick}. ${questBrief(nick, existing)}`
+    const decision = issueDecision({ held, requested: kind })
+    if (decision.action === 'resend') {
+      const reminder = `your envelope is still sealed, ${nick}. ${questBrief(nick, held)}`
       if (!viaDm) client.sendMessage(nick, reminder)
       return reminder
+    }
+    if (decision.action === 'blocked') {
+      const msg = `you're still holding a ${decision.holding} run, ${nick}, and i only track one at a time — finish it, or say "quest drop" and i'll tear it up. then ask me for the ${decision.kind} again.`
+      if (!viaDm) client.sendMessage(nick, msg)
+      return msg
     }
     let q
     if (kind === 'survey') {
@@ -644,6 +654,22 @@ for (const [i, agent] of AGENTS.entries()) {
   }
 
   const REFERRALS_PER_DAY = 5
+  /** Nobody should be stuck holding a run they don't want. Clears every entry
+   *  belonging to this person, including ones sealed under an older nick. */
+  const dropQuests = (nick) => {
+    const gone = []
+    for (const [k, q] of [...quests]) {
+      if (k === nick.toLowerCase() || sameCourier(k, nick)) {
+        quests.delete(k)
+        gone.push(q?.phrase ?? q?.kind ?? 'a run')
+      }
+    }
+    if (!gone.length) return `you aren't holding anything, ${nick} — ask me for a run whenever you like.`
+    saveQuests()
+    console.log(`[${agent.nick}] dropped ${gone.length} run(s) for ${nick}`)
+    return `torn up, ${nick} — ${gone.join(', ')} is off my books. ask me for whatever you want next.`
+  }
+
   const mintInvite = (nick) => {
     if (agent.nick !== 'cartographer') {
       return `the cartographer keeps the invitations, ${nick} — ask there.`
@@ -737,6 +763,7 @@ for (const [i, agent] of AGENTS.entries()) {
     didFor: (n) => client.getDidForNick?.(n),
     verifyPost: (n, who, held) => void verifyStandingPost(n, who, held),
     verifyCommit: (n, who, held) => void verifyCommitQuest(n, who, held),
+    dropQuests,
     heldQuest: (n) => quests.get(String(n).toLowerCase()),
   })
 

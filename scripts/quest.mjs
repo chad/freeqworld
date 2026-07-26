@@ -172,3 +172,30 @@ export function referralCredit({ pending, credited, speaker, text, day }) {
   if (credited.has(key)) return { credit: false, reason: 'already-credited' }
   return { credit: true, inviter: pend.inviter, key }
 }
+
+// --- which run to hand out ---------------------------------------------------
+
+/** Runs that keep no ledger slot: they are checkable at any moment (face) or the
+ *  signed token is itself the record (referral). Holding something else must
+ *  never block them. */
+export const STATELESS_KINDS = ['face', 'referral']
+
+/** Runs that occupy the single per-player slot. */
+export const SLOT_KINDS = ['courier', 'survey', 'rekindle', 'escort', 'post', 'commit']
+
+/**
+ * Decide what a "quest <kind>" request means when the player may already hold
+ * one. The ledger holds ONE run per player, and the idempotency check used to
+ * run before the kind was even looked at — so asking for a face check while
+ * holding a courier envelope re-sent the courier, every time, forever.
+ *
+ * Legacy entries have no `kind` field, so an absent kind means courier.
+ */
+export function issueDecision({ held, requested }) {
+  const want = requested ?? 'courier'
+  if (STATELESS_KINDS.includes(want)) return { action: 'issue', kind: want }
+  if (!held) return { action: 'issue', kind: want }
+  const holding = held.kind ?? 'courier'
+  if (holding === want) return { action: 'resend', kind: holding }
+  return { action: 'blocked', kind: want, holding }
+}
