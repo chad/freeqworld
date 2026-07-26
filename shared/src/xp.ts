@@ -51,6 +51,10 @@ const LADDER_FOR_KIND: Record<string, Ladder> = {
 /** Weighted by how hard the work is to fake, not by how long it takes.
  *  An escort needs a stranger to voluntarily answer, so it pays most. */
 const XP_BY_KIND: Record<string, number> = {
+  // an external action, verified with no oracle at all: your Bluesky avatar is
+  // the exact bytes your DID derives (server/src/face.ts + shared/src/cid.ts).
+  // A one-off achievement, so it scores but has no ladder.
+  face: 35,
   // bringing a real new identity into the network is the most valuable single
   // act available, so it pays most — and it is the hardest to fake, because the
   // arrival is witnessed and a throwaway key is refused
@@ -135,6 +139,14 @@ export const QUEST_KINDS: QuestKind[] = [
     witnessedBy: 'the silence is measured from real message timestamps; only a dead room can be offered',
     xp: XP_BY_KIND.rekindle!,
     alwaysDouble: true,
+  },
+  {
+    id: 'face',
+    label: 'Wear your face',
+    ask: 'cartographer, quest face',
+    doThis: 'set your Bluesky avatar to the character your DID derives — the ID app does it in one tap',
+    witnessedBy: 'no oracle at all: your avatar is addressed by the hash of its bytes inside a record signed by your own repo, and the portrait is recomputed from your DID',
+    xp: XP_BY_KIND.face!,
   },
   {
     id: 'referral',

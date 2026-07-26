@@ -16,7 +16,7 @@ import {
   invitePayload, inviteCanonical, encodeInvite, referralCredit,
 } from './quest.mjs'
 import nacl from 'tweetnacl'
-import { hkdfSync, randomBytes } from 'node:crypto'
+import { createHash, hkdfSync, randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -65,9 +65,9 @@ const POS_TAG = '+freeq.at/world-pos'
 
 /** Which run the courier asked for. Defaults to the classic courier run. */
 function questKind(text) {
-  const m = /quest\s+(survey|rekindle|escort|referral|invite)/i.exec(text)
+  const m = /quest\s+(survey|rekindle|escort|referral|invite|face|avatar)/i.exec(text)
   const kind = m ? m[1].toLowerCase() : 'courier'
-  return kind === 'invite' ? 'referral' : kind
+  return kind === 'invite' ? 'referral' : kind === 'avatar' ? 'face' : kind
 }
 
 const AGENTS = [
@@ -253,6 +253,34 @@ for (const [i, agent] of AGENTS.entries()) {
         return `every room i watch has been spoken in today, ${nick} — nothing to rekindle. say "quest" for a courier run, or come back when somewhere has gone quiet.`
       }
       q = { kind: 'rekindle', target: stale, bonus: true, quietHours: Math.floor(quietForMs(stale) / 3600_000) }
+    } else if (kind === 'face') {
+      // nothing to hold in a ledger: this is checkable at any moment, so we
+      // check it now and attest if it is already true
+      const player = client.getDidForNick?.(nick)
+      if (!player) {
+        try { client.whois(nick) } catch { /* offline */ }
+        return `i need to know your DID first, ${nick} — ask again in a moment.`
+      }
+      if (!player.startsWith('did:plc:') && !player.startsWith('did:web:')) {
+        return `that run needs a real AT Protocol identity, ${nick} — sign in with your Bluesky handle and ask again.`
+      }
+      void (async () => {
+        try {
+          const res = await checkFaceFor(player)
+          if (res.ok) {
+            console.log(`[${agent.nick}] face verified (${res.variant}) for ${player.slice(0, 24)}…`)
+            attestCompletionForDid(player, 'face', CHANNELS[0], false)
+            client.sendMessage(nick, `verified, ${nick} — your avatar is the exact bytes your DID derives (${res.variant}). nobody had to take your word for it: the blob is addressed by its own hash, in a record signed by your repo.`)
+          } else {
+            console.log(`[${agent.nick}] face not worn by ${player.slice(0, 24)}… (avatar ${String(res.actual).slice(0, 16)}…)`)
+            client.sendMessage(nick, `not yet, ${nick} — your avatar isn't the portrait your DID derives. set it at https://pfp.freeq.at and ask me again; i compare the hash of the bytes, so it has to be the real thing.`)
+          }
+        } catch (e) {
+          console.log(`[${agent.nick}] face check failed:`, String(e).slice(0, 120))
+          client.sendMessage(nick, `i couldn't read your profile record just now, ${nick} — try me again shortly.`)
+        }
+      })()
+      return `checking your face against your DID, ${nick} — one moment.`
     } else if (kind === 'referral') {
       // no quest ledger entry: the signed token is the record, so an agent
       // restart can never invalidate an invite already in someone's hands
@@ -371,6 +399,49 @@ for (const [i, agent] of AGENTS.entries()) {
     }
     if (seen.has(String(redeemer).toLowerCase())) return { ok: false, reason: 'already-known', payload }
     return { ok: true, payload }
+  }
+
+  // ── "wear your derived face" ───────────────────────────────────────────────
+  //
+  // The only quest with no oracle in it. An AT Proto avatar is addressed by the
+  // hash of its bytes, inside a record signed by that person's own repo key; the
+  // portrait is a pure function of their DID. So: fetch the canonical bytes,
+  // HASH THEM OURSELVES (so the renderer cannot lie to us about the CID), read
+  // their profile record straight from the AppView, and compare.
+  const WORLD_HTTP = process.env.FREEQ_WORLD_HTTP ?? 'https://world.freeq.at'
+  const APPVIEW_HTTP = 'https://public.api.bsky.app/xrpc'
+
+  const rawCidOf = (bytes) => {
+    const digest = createHash('sha256').update(bytes).digest()
+    const prefixed = Buffer.concat([Buffer.from([0x01, 0x55, 0x12, 0x20]), digest])
+    const B32 = 'abcdefghijklmnopqrstuvwxyz234567'
+    let out = '', bits = 0, value = 0
+    for (const b of prefixed) {
+      value = (value << 8) | b; bits += 8
+      while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5 }
+    }
+    if (bits > 0) out += B32[(value << (5 - bits)) & 31]
+    return `b${out}`
+  }
+
+  const checkFaceFor = async (playerDid) => {
+    const expected = []
+    for (const variant of ['explorer', 'portrait']) {
+      const r = await fetch(`${WORLD_HTTP}/face/${encodeURIComponent(playerDid)}.png?variant=${variant}`)
+      if (!r.ok) continue
+      const bytes = Buffer.from(await r.arrayBuffer())
+      // hash it ourselves rather than believing the x-freeq-cid header
+      expected.push({ variant, cid: rawCidOf(bytes) })
+    }
+    const rec = await fetch(
+      `${APPVIEW_HTTP}/com.atproto.repo.getRecord?repo=${encodeURIComponent(playerDid)}` +
+      `&collection=app.bsky.actor.profile&rkey=self`,
+    )
+    if (!rec.ok) return { ok: false, reason: 'no-profile', expected }
+    const body = await rec.json()
+    const actual = body?.value?.avatar?.ref?.$link ?? null
+    const hit = expected.find((e) => e.cid === actual)
+    return { ok: Boolean(hit), variant: hit?.variant, actual, expected }
   }
 
   // ── Referrals ─────────────────────────────────────────────────────────────

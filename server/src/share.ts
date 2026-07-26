@@ -176,3 +176,70 @@ ${video}
     .replace(/[ \t]*<meta (property="og:[^"]*"|name="(twitter:[^"]*|description)")[^>]*>\n?/gi, '')
   return stripped.replace(/<\/head>/i, `${tags}\n</head>`)
 }
+
+// --- "wear your derived face" ------------------------------------------------
+//
+// The one external quest that needs NO oracle. An AT Proto avatar is addressed
+// by the hash of its bytes inside a record signed by that person's repo key, and
+// our portrait is a pure function of their DID — so we recompute the image,
+// compute its CID, and compare. Nobody's word is involved, and anyone can repeat
+// the check with this code.
+
+import { renderFace, type FaceVariant } from './face.ts'
+
+const faceCache = new Map<string, { png: Buffer; cid: string; at: number }>()
+
+export async function facePng(did: string, variant: FaceVariant): Promise<{ png: Buffer; cid: string }> {
+  const key = `${did}:${variant}`
+  const hit = faceCache.get(key)
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return { png: hit.png, cid: hit.cid }
+  const f = await renderFace(did, variant)
+  faceCache.set(key, { png: f.png, cid: f.cid, at: Date.now() })
+  if (faceCache.size > 300) faceCache.delete(faceCache.keys().next().value!)
+  return { png: f.png, cid: f.cid }
+}
+
+export interface FaceCheck {
+  did: string
+  handle: string
+  /** the CID their signed profile record points at, if any */
+  avatar_cid: string | null
+  /** what each variant of their derived portrait hashes to */
+  expected: Record<FaceVariant, string>
+  /** which variant they are wearing, or null */
+  wearing: FaceVariant | null
+  /** how to reproduce this result yourself */
+  proof: string
+}
+
+/** Is this identity wearing the face its DID derives? */
+export async function checkFace(id: Identity): Promise<FaceCheck> {
+  let avatarCid: string | null = null
+  try {
+    const r = await fetch(
+      `${APPVIEW}/com.atproto.repo.getRecord?repo=${encodeURIComponent(id.did)}` +
+        `&collection=app.bsky.actor.profile&rkey=self`,
+      { signal: AbortSignal.timeout(6000) },
+    )
+    if (r.ok) {
+      const body = (await r.json()) as { value?: { avatar?: { ref?: { $link?: string } } } }
+      avatarCid = body.value?.avatar?.ref?.$link ?? null
+    }
+  } catch {
+    /* unreachable PDS: report unknown rather than guessing */
+  }
+  const variants: FaceVariant[] = ['explorer', 'portrait']
+  const expected = {} as Record<FaceVariant, string>
+  for (const v of variants) expected[v] = (await facePng(id.did, v)).cid
+  const wearing = variants.find((v) => expected[v] === avatarCid) ?? null
+  return {
+    did: id.did,
+    handle: id.handle,
+    avatar_cid: avatarCid,
+    expected,
+    wearing,
+    proof:
+      'the avatar blob is addressed by the hash of its bytes inside a record signed by that repo; ' +
+      'render the portrait from the DID, hash it, compare (shared/src/cid.ts)',
+  }
+}

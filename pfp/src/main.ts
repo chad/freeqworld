@@ -5,8 +5,9 @@
 
 import { generateKeypair, didFromPublicKey } from '../../shared/src/signing'
 import { deriveAvatar } from '../../shared/src/avatar'
-import { renderPfp, traitSummary, canvasToPngBlob, canvasToPngBase64, type Variant } from './render'
+import { renderPfp, traitSummary, type Variant } from './render'
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
+import { bytesToBase64, canonicalFace } from './canonical'
 import {
   revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme, themeClock, onPlayStateChange,
   onSilentPlayback,
@@ -193,9 +194,10 @@ async function surpriseMe(): Promise<void> {
 
 async function download(): Promise<void> {
   if (!currentDid) return
-  const { canvas } = await renderPfp(currentDid, variant, 1024)
-  const blob = await canvasToPngBlob(canvas)
-  const url = URL.createObjectURL(blob)
+  // the same canonical bytes we would upload, so what you download is the exact
+  // artifact that can be verified against your DID
+  const face = await canonicalFace(currentDid, variant)
+  const url = URL.createObjectURL(new Blob([face.bytes as unknown as BlobPart], { type: 'image/png' }))
   const a = document.createElement('a')
   a.href = url
   a.download = `freeqworld-pfp-${variant}.png`
@@ -290,9 +292,9 @@ async function completeOAuth(ret: PfpOAuthReturn): Promise<void> {
   $('c-err').textContent = ''
   $('c-status').textContent = 'setting your avatar…'
   try {
-    const { canvas } = await renderPfp(ret.did, variant, 512)
-    const b64 = await canvasToPngBase64(canvas)
-    const { handle, posted } = await setAvatarViaBroker(ret.brokerToken, b64, ret.post)
+    // the canonical bytes, so the result is verifiable by anyone (see canonical.ts)
+    const face = await canonicalFace(ret.did, variant)
+    const { handle, posted } = await setAvatarViaBroker(ret.brokerToken, bytesToBase64(face.bytes), ret.post)
     showDone(handle || ret.handle, posted)
   } catch (e) {
     $('c-status').textContent = ''
@@ -332,9 +334,9 @@ async function doConnect(): Promise<void> {
     currentLabel = `@${session.handle}`
     await paint()
 
-    status.textContent = 'rendering your character…'
-    const { canvas } = await renderPfp(session.did, variant, 512)
-    const bytes = new Uint8Array(await (await canvasToPngBlob(canvas)).arrayBuffer())
+    status.textContent = 'fetching your canonical portrait…'
+    const face = await canonicalFace(session.did, variant)
+    const bytes = face.bytes
 
     status.textContent = 'uploading…'
     const avatarBlob = await uploadBlob(session, bytes, 'image/png')

@@ -9,7 +9,8 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { appPageWithOg, cardPng, clipMp4, resolveIdentity, stingerWav, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, resolveIdentity, stingerWav, themeWav } from './share.ts'
+import type { FaceVariant } from './face.ts'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
@@ -212,6 +213,20 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     return json(town.getAgents().map((a) => a.member))
   }
 
+  // Is an identity wearing the face its DID derives? Zero-trust: we recompute
+  // the portrait and compare hashes with their SIGNED profile record.
+  if (path.startsWith('/api/face/') || path.startsWith('/id/api/face/')) {
+    const who = path.slice(path.indexOf('/api/face/') + '/api/face/'.length)
+    try {
+      const id = await resolveIdentity(who)
+      return json(await checkFace(id))
+    } catch (err) {
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: (err as Error).message }))
+      return
+    }
+  }
+
   // --- the XP ledger --------------------------------------------------------
   // freeq-server already stores every `+freeq.at/event` TAGMSG durably and
   // serves it at /api/v1/channels/{name}/events — but with no CORS header, so a
@@ -252,7 +267,7 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   // crawlers don't run JS, so its OG tags can never vary per person).
   // Reachable under /id/... on world.freeq.at and at the root on pfp.freeq.at.
   const share = path.startsWith('/id/') ? path.slice('/id'.length) : path
-  const shareMatch = /^\/(u|card|theme|stinger|clip)\/(.+)$/.exec(share)
+  const shareMatch = /^\/(u|card|theme|stinger|clip|face)\/(.+)$/.exec(share)
   // The app's own address bar is `?u=<handle>` (that's the URL a visitor copies
   // after following a share, or after looking someone up). Crawlers asking for
   // it must get THAT person's card, not the generic site one — so serve the
@@ -305,6 +320,20 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
           'content-length': String(png.length),
         })
         res.end(png)
+        return
+      }
+      if (kind === 'face') {
+        // the canonical portrait: a pure function of the DID, so cache it hard
+        const variant: FaceVariant = url.searchParams.get('variant') === 'portrait' ? 'portrait' : 'explorer'
+        const { png, cid } = await facePng(id.did, variant)
+        res.writeHead(200, {
+          'content-type': 'image/png',
+          'cache-control': 'public, max-age=604800, immutable',
+          'content-length': String(png.length),
+          // the hash these exact bytes will have as an AT Proto blob
+          'x-freeq-cid': cid,
+        })
+        res.end(req.method === 'HEAD' ? undefined : png)
         return
       }
       if (kind === 'clip') {
