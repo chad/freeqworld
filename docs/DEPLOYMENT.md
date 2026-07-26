@@ -43,6 +43,29 @@ The FreeqWorld ID app is served two ways from ONE source (`pfp/`):
   so this vhost has no backend. The **one-tap** path additionally calls the auth
   broker (below).
 
+  ### Shareable identity pages (`/u/`, `/card/`, `/theme/`, `/stinger/`)
+
+  These four prefixes on `pfp.freeq.at` are **NOT static** — they are proxied to
+  the town server (miren router on `127.0.0.1:8090`, `Host: world.freeq.at`) by a
+  `location ~ ^/(u|card|theme|stinger)/` block in the vhost. Per-person
+  OpenGraph tags can't come from a static SPA: crawlers don't run JS, so every
+  share unfurled with the same generic card. Handlers live in
+  `server/src/{share,card,png,font}.ts`, so **changing them needs a world
+  deploy** (`miren deploy -C freeq`), not an rsync. A backup of the pre-change
+  vhost is at `/root/pfp.freeq.at.bak.*`; `nginx -t` before every reload.
+
+  The share origin is a **constant** (`SHARE_ORIGIN`, default
+  `https://pfp.freeq.at`) rather than derived from request headers: the miren
+  router strips `X-Forwarded-Host` and rewrites `X-Forwarded-Proto` to `http`,
+  so the public host isn't knowable inside the app — and an `http://` og:image
+  gets rejected by crawlers. One canonical domain also means one cached card
+  per person.
+
+  Verify a change with Bluesky's own extractor, which is public:
+  ```sh
+  curl -s "https://cardyb.bsky.app/v1/extract?url=https%3A%2F%2Fpfp.freeq.at%2Fu%2Fbsky.app"
+  ```
+
   Since 2026-07-25 the reveal also **plays the visitor's theme tune** (the
   chiptune engine in `music/`, bundled into the same JS — +22 kB gz, no audio
   assets, no new network calls). Nothing about the deploy changes: rebuild and

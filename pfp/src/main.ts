@@ -21,6 +21,8 @@ let currentLabel = ''
 let variant: Variant = 'explorer'
 /** the default view: the character moving, in time with their own theme */
 let view: 'live' | Variant = 'live'
+/** true when a shared link put someone else's identity on screen */
+let viewingShared = false
 
 const stage = new Stage($<HTMLCanvasElement>('pfp'))
 stage.setClock(themeClock)
@@ -72,6 +74,7 @@ async function generateFromHandle(): Promise<void> {
   const handle = $<HTMLInputElement>('handle').value.trim()
   if (!handle) return
   setBusy(true)
+  viewingShared = false
   $('viewing').classList.add('hidden')
   $('shared').classList.add('hidden')
   try {
@@ -96,9 +99,12 @@ function openShare(): void {
   if (!currentDid) return
   const url = shareUrl()
   $<HTMLInputElement>('sharelink').value = url
-  const text = currentLabel.startsWith('@')
+  const mine = !viewingShared && currentLabel.startsWith('@')
+  const text = mine
     ? `my FreeqWorld character — and the chiptune my DID composes ✦`
-    : `a FreeqWorld character and its chiptune, derived from a DID ✦`
+    : viewingShared
+      ? `${currentLabel}'s FreeqWorld character — and the chiptune their DID composes ✦`
+      : `a FreeqWorld character and its chiptune, derived from a DID ✦`
   $<HTMLAnchorElement>('sharepost').href =
     `https://bsky.app/intent/compose?text=${encodeURIComponent(`${text}\n\n${url}`)}`
   $('shared').classList.remove('hidden')
@@ -124,6 +130,7 @@ async function showSharedIdentity(who: string): Promise<void> {
     const isDid = who.startsWith('did:')
     currentDid = isDid ? who : await resolveHandle(who)
     currentLabel = isDid ? 'a shared identity' : `@${who.replace(/^@/, '')}`
+    viewingShared = true
     $('viewing-who').textContent = currentLabel
     $('viewing').classList.remove('hidden')
     $<HTMLInputElement>('handle').value = isDid ? '' : who.replace(/^@/, '')
@@ -158,6 +165,8 @@ function runBeatIndicator(): void {
 
 async function surpriseMe(): Promise<void> {
   stopTheme() // a new identity gets a new tune
+  viewingShared = false
+  $('viewing').classList.add('hidden')
   const kp = generateKeypair()
   currentDid = didFromPublicKey(kp.publicKey)
   currentLabel = 'a fresh did:key identity'

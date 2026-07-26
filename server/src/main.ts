@@ -178,9 +178,16 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   const shareMatch = /^\/(u|card|theme|stinger)\/(.+)$/.exec(share)
   if (shareMatch) {
     const [, kind, rawWho] = shareMatch as unknown as [string, string, string]
-    const forwardedHost = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? 'pfp.freeq.at')
-    const proto = String(req.headers['x-forwarded-proto'] ?? (forwardedHost.startsWith('localhost') ? 'http' : 'https'))
-    const base = path.startsWith('/id/') ? `${proto}://${forwardedHost}/id` : `${proto}://${forwardedHost}`
+    // ONE canonical origin for shares, rather than whatever host served this
+    // request. The miren router strips X-Forwarded-Host and rewrites
+    // X-Forwarded-Proto, so the public hostname simply isn't knowable from the
+    // headers here — and a single canonical domain is what we want anyway, so
+    // every share of a person consolidates on one URL (and one cached card).
+    const reqHost = String(req.headers.host ?? '')
+    const local = /^(localhost|127\.|\[?::1)/.test(reqHost)
+    const base = local
+      ? `http://${reqHost}${path.startsWith('/id/') ? '/id' : ''}`
+      : (process.env.SHARE_ORIGIN ?? 'https://pfp.freeq.at')
     try {
       const id = await resolveIdentity(rawWho)
       if (kind === 'u') {
