@@ -248,7 +248,9 @@ The live database is `/home/chad/src/freeq/irc.db` on **tech.blueyard.com**
 in the Hetzner box's `freeq-data` docker volume is a STALE LEFTOVER from before
 the move — do not touch it thinking it is production; its files stop at Jul 4.
 
-Procedure (done 2026-07-26: 129 → 79 channels):
+Procedure (done 2026-07-26: 129 → 79 channels, then a second authorised pass
+removing `#pilotdemo`, `#pilotdemo2`, `#rev-live-r3qv`, `#policytest`, `#didtest`
+— 297 more messages — leaving 74 in LIST):
 
 ```sh
 # 1. evidence, read-only
@@ -279,6 +281,10 @@ Rules learned doing it:
   `messages_fts` table in this database.
 - **`#freeq` is intentionally absent from LIST** (private, policy-gated). Its
   absence is not damage — check the DB before panicking.
+- **Channels with real history are only ever removed on an explicit named
+  request.** The evidence rule protects them by default; a human overriding it is
+  the reason deletion is manual. `#freeqpilot` (436 messages, 22 senders) was
+  held back from the second pass rather than guessed at from "the pilot ones".
 - **Empty shells come back.** Any client with a channel in its auto-join list
   recreates the row on reconnect. After this run, 12 shells reappeared
   (`#chadmac-*`, `#avtest`, `#scrprobe-0703`) with **0 messages** — the history is
