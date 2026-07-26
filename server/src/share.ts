@@ -20,6 +20,7 @@ import { mintChiptune } from '../../music/src/mint.ts'
 import { renderScore } from '../../music/src/synth.ts'
 import { encodeWav } from '../../music/src/wav.ts'
 import { deriveStinger } from '../../music/src/motif.ts'
+import { CLIP_H, CLIP_W, clipFor, ffmpeg } from './clip.ts'
 
 const APPVIEW = 'https://public.api.bsky.app/xrpc'
 
@@ -36,7 +37,7 @@ const TTL = 60 * 60 * 1000 // handles can move; an hour is plenty for a crawler
 
 /** "@alice.bsky.social", "alice.bsky.social" or a raw DID -> identity. */
 export async function resolveIdentity(input: string): Promise<Identity> {
-  const raw = decodeURIComponent(input).trim().replace(/^@/, '').replace(/\.(png|wav|json)$/i, '')
+  const raw = decodeURIComponent(input).trim().replace(/^@/, '').replace(/\.(png|wav|json|mp4)$/i, '')
   const hit = idCache.get(raw)
   if (hit && Date.now() - hit.at < TTL) return hit.value
 
@@ -89,6 +90,11 @@ export async function themeWav(id: Identity, bars = 8): Promise<Uint8Array> {
   return wav
 }
 
+export async function clipMp4(id: Identity): Promise<Buffer> {
+  const { mp4 } = await clipFor(id.did, id.label.toUpperCase())
+  return mp4
+}
+
 export async function stingerWav(id: Identity): Promise<Uint8Array> {
   return encodeWav(renderScore(await deriveStinger(id.did), { loop: false, sampleRate: 22050, tail: 0.6 }), { mono: true })
 }
@@ -96,30 +102,47 @@ export async function stingerWav(id: Identity): Promise<Uint8Array> {
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
-/** The share page: OG tags for crawlers, and for humans an instant hand-off
- *  into the real app (which then plays the tune on a tap). */
-export async function sharePage(id: Identity, origin: string): Promise<string> {
+/** Per-profile OpenGraph tags injected into the REAL app HTML.
+ *
+ *  No interstitial and no redirect: crawlers read the tags, humans get the app
+ *  straight away. Both `/u/<handle>` and `/?u=<handle>` serve this, so every URL
+ *  that names somebody unfurls as that somebody.
+ *
+ *  The identity stays in the QUERY STRING, never the path: pfp/src/oauth.ts
+ *  builds the broker's `return_to` from `location.pathname`, and that allowlist
+ *  is compiled into the Rust broker (docs/DEPLOYMENT.md). A path-based URL would
+ *  silently break one-tap avatar writes.
+ */
+export async function appPageWithOg(id: Identity, origin: string, indexHtml: string): Promise<string> {
+  const canEncode = (await ffmpeg()) !== null
   const minted = await mintChiptune(id.did, 16)
   const c = Object.fromEntries(minted.card)
   const who = id.label
-  const title = `${who} in FreeqWorld ✦ ${c.key}, ${c.tempo}`
+  const slug = encodeURIComponent(id.handle || id.did)
+  const title = `${who} in FreeqWorld \u2726 ${c.key}, ${c.tempo}`
   const desc =
-    `${who}'s character and their theme tune, both derived from their DID — ` +
+    `${who}'s character and their theme tune, both derived from their DID \u2014 ` +
     `${c.key}, ${c.tempo}, ${c.motif} on ${c.voice}, ${c.bass} bass, ${c.percussion}. ` +
     `Nothing uploaded: the sprite and the music are computed from the identity itself.`
-  const card = `${origin}/card/${encodeURIComponent(id.handle || id.did)}.png`
-  const app = `${origin}/?u=${encodeURIComponent(id.handle || id.did)}`
-  const wav = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.wav`
+  const card = `${origin}/card/${slug}.png`
+  const clip = `${origin}/clip/${slug}.mp4`
+  const wav = `${origin}/theme/${slug}.wav`
 
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${esc(title)}</title>
+  // Discord / Telegram / Mastodon / iMessage play og:video inline, with sound.
+  // Bluesky and X ignore it entirely and use the image, so both must be here.
+  const video = canEncode
+    ? `<meta property="og:video" content="${esc(clip)}" />
+<meta property="og:video:secure_url" content="${esc(clip)}" />
+<meta property="og:video:url" content="${esc(clip)}" />
+<meta property="og:video:type" content="video/mp4" />
+<meta property="og:video:width" content="${CLIP_W}" />
+<meta property="og:video:height" content="${CLIP_H}" />`
+    : ''
+
+  const tags = `<title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}" />
 <link rel="canonical" href="${esc(origin)}/u/${esc(id.handle || id.did)}" />
-<meta property="og:type" content="music.song" />
+<meta property="og:type" content="${canEncode ? 'video.other' : 'music.song'}" />
 <meta property="og:site_name" content="FreeqWorld ID" />
 <meta property="og:title" content="${esc(title)}" />
 <meta property="og:description" content="${esc(desc)}" />
@@ -129,29 +152,17 @@ export async function sharePage(id: Identity, origin: string): Promise<string> {
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="${esc(who)}'s pixel character and the first eight bars of their theme tune" />
+${video}
 <meta property="og:audio" content="${esc(wav)}" />
 <meta property="og:audio:type" content="audio/wav" />
-<meta property="music:duration" content="30" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="${esc(title)}" />
 <meta name="twitter:description" content="${esc(desc)}" />
-<meta name="twitter:image" content="${esc(card)}" />
-<meta name="theme-color" content="#0d0d14" />
-<style>
-  html,body{margin:0;height:100%;background:#0d0d14;color:#d8d6c8;
-    font-family:ui-monospace,Menlo,monospace;display:flex;align-items:center;justify-content:center}
-  a{color:#ffb454}
-  .wrap{text-align:center;padding:24px}
-  img{max-width:min(680px,92vw);border-radius:12px;border:1px solid #2c2c40}
-  p{color:#8a8896;font-size:.85rem}
-</style>
-<script>location.replace(${JSON.stringify(app)})</script>
-</head>
-<body>
-  <div class="wrap">
-    <img src="${esc(card)}" alt="${esc(who)}'s FreeqWorld character" />
-    <p>${esc(title)} — <a href="${esc(app)}">open it and press play</a></p>
-  </div>
-</body>
-</html>`
+<meta name="twitter:image" content="${esc(card)}" />`
+
+  // strip the build's own title + og/twitter/description tags, then inject ours
+  const stripped = indexHtml
+    .replace(/<title>[\s\S]*?<\/title>/i, '')
+    .replace(/[ \t]*<meta (property="og:[^"]*"|name="(twitter:[^"]*|description)")[^>]*>\n?/gi, '')
+  return stripped.replace(/<\/head>/i, `${tags}\n</head>`)
 }

@@ -27,5 +27,8 @@
     "@types/ws": "^8.5.12",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "^5.2.0"
   }
 }

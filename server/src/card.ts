@@ -8,7 +8,7 @@
 // EIGHT BARS OF THEIR ACTUAL SCORE as a piano roll — the shape of the melody is
 // per-person, so no two cards look alike.
 
-import { deriveAvatar, renderSpritePixels, type Avatar } from '../../shared/src/avatar'
+import { deriveAvatar, renderSpritePixels, type Avatar, type Facing } from '../../shared/src/avatar'
 import { compose } from '../../music/src/compose.ts'
 import { mintChiptune, type Minted } from '../../music/src/mint.ts'
 import { ticksPerBar } from '../../music/src/score.ts'
@@ -24,7 +24,7 @@ const PAPER: RGB = [216, 214, 200]
 const DIM: RGB = [138, 136, 150]
 const PANEL: RGB = [27, 27, 43]
 
-function hslToRgb(h: number, s: number, l: number): RGB {
+export function hslToRgb(h: number, s: number, l: number): RGB {
   const k = (n: number) => (n + h / 30) % 12
   const a = s * Math.min(l, 1 - l)
   const f = (n: number) => l - a * Math.max(-1, Math.min(Math.min(k(n) - 3, 9 - k(n)), 1))
@@ -55,7 +55,7 @@ function hueDist(a: number, b: number): number {
 }
 
 /** Same rule as the app: a backdrop hue that never blends into the skin. */
-function backdrop(av: Avatar): { h: number; s: number } {
+export function backdrop(av: Avatar): { h: number; s: number } {
   const skin = rgbToHsl(hexToRgb(String(av.traits.skin_palette)))
   const acc = rgbToHsl(hexToRgb(String(av.traits.accent_palette)))
   let h = acc.h
@@ -63,8 +63,11 @@ function backdrop(av: Avatar): { h: number; s: number } {
   return { h, s: Math.min(0.6, Math.max(0.42, acc.s || 0.5)) }
 }
 
-function drawSprite(bmp: Bitmap, av: Avatar, x: number, y: number, scale: number): void {
-  const px = renderSpritePixels(av, 'south', 0)
+export function drawSprite(
+  bmp: Bitmap, av: Avatar, x: number, y: number, scale: number,
+  facing: Facing = 'south', frame = 0,
+): void {
+  const px = renderSpritePixels(av, facing, frame)
   for (let py = 0; py < px.height; py++) {
     for (let pxx = 0; pxx < px.width; pxx++) {
       const color = px.palette[px.pixels[py * px.width + pxx]!]!
@@ -76,12 +79,13 @@ function drawSprite(bmp: Bitmap, av: Avatar, x: number, y: number, scale: number
 
 /** The first bars of the real score, as a piano roll. This is the fingerprint:
  *  a different melody makes a visibly different card. */
-function drawRoll(
-  bmp: Bitmap, minted: Minted, x: number, y: number, w: number, h: number, accent: RGB, bd: { h: number; s: number },
+export function drawRoll(
+  bmp: Bitmap, minted: Minted, x: number, y: number, w: number, h: number, accent: RGB,
+  bd: { h: number; s: number }, opts: { bars?: number; playhead?: number } = {},
 ): void {
   const score = compose(minted.theme)
   const bar = ticksPerBar(minted.theme.meter)
-  const bars = 8
+  const bars = opts.bars ?? 8
   const span = bar * bars
   // Only the pitched voices: drums sit at fixed pitches and turn the roll into
   // dotted noise, which hides the one thing worth showing — the melody's shape.
@@ -110,6 +114,12 @@ function drawRoll(
       const thick = lead ? 8 : 5
       fillRect(bmp, nx, ny - thick / 2, nw, thick, lanes[ch]!, lead ? 1 : 0.6)
     }
+  }
+  // a sweeping playhead turns the roll into a score being read (video only)
+  if (opts.playhead !== undefined) {
+    const px = x + Math.max(0, Math.min(1, opts.playhead)) * w
+    fillRect(bmp, px - 1, y, 3, h, [255, 255, 255], 0.9)
+    fillRect(bmp, px - 7, y, 6, h, accent, 0.16)
   }
 }
 

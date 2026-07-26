@@ -1936,6 +1936,37 @@ export class App {
    *  signed actions from whoever posted them — an agent's open work queue and
    *  the player's quest board are the same object. */
   private openActs = new Map<string, { id: string; title: string; caps: string; from: string; nick: string; verified: boolean; ts: number }>()
+  /** the handoff we most recently claimed — per the RFC the ASSIGNEE is the one
+   *  who may `complete`, so the agent's confirmation makes us post it */
+  private claimedAct: { id: string; title: string; caps: string } | null = null
+
+  /** Surface a wire event in the Dev inspector (acts aren't ServerFrames). */
+  private inspectNote(dir: 'in' | 'out', summary: string, ok: boolean | null = null): void {
+    this.inspectorFrames.push({ dir, summary, ok })
+    if (this.inspectorFrames.length > 120) this.inspectorFrames.shift()
+    if (document.body.classList.contains('mode-dev')) this.renderInspector()
+  }
+
+  /** The run was verified in the real channel: post the signed `complete` that
+   *  closes the handoff's lifecycle on the wire. */
+  private async completeClaimedAct(): Promise<void> {
+    const held = this.claimedAct
+    const conn = this.conn
+    if (!held || !this.identity || !conn || !('sendAct' in conn)) return
+    this.claimedAct = null
+    const tags = actTags({
+      kind: 'handoff',
+      verb: 'complete',
+      id: held.id,
+      from: this.identity.device_did,
+      title: held.title,
+      caps: held.caps,
+      ref: held.id,
+    })
+    tags[ACT_SIG_TAG] = await signAct(tags, this.identity.keypair.secretKey, this.identity.keypair.publicKey)
+    ;(conn as FreeqBackend).sendAct(this.channel, tags)
+    this.inspectNote('out', `act complete ${held.id.slice(0, 8)} · signed`, true)
+  }
 
   /** Take an open handoff: sign a `claim` with the browser's device key (a
    *  did:key, so anyone in the room can verify it without a lookup), post it
@@ -1959,6 +1990,9 @@ export class App {
     })
     tags[ACT_SIG_TAG] = await signAct(tags, this.identity.keypair.secretKey, this.identity.keypair.publicKey)
     ;(conn as FreeqBackend).sendAct(this.channel, tags)
+    // remember what we took on, so the assignee can post `complete` itself
+    this.claimedAct = { id: offer.id, title: offer.title, caps: offer.caps }
+    this.inspectNote('out', `act claim ${offer.id.slice(0, 8)} · ${offer.caps} · signed`, true)
     // the agent verifies the actual work over the existing DM flow
     const kind = offer.caps.split('/').pop() ?? 'courier'
     ;(conn as FreeqBackend).sendDm('cartographer', kind === 'courier' ? 'quest' : `quest ${kind}`)
@@ -1988,7 +2022,10 @@ export class App {
     if (verb === 'offer') {
       this.openActs.set(id, { id, title: get('act-title') ?? 'untitled work', caps: get('act-caps') ?? '', from, nick, verified, ts: Date.now() })
     } else if (verb === 'claim' || verb === 'complete' || verb === 'cancel') {
-      if (verb !== 'claim') this.openActs.delete(id)
+      // A standing open offer is re-posted by its agent and stays claimable;
+      // only a cancel actually retires it.
+      if (verb === 'cancel') this.openActs.delete(id)
+      this.inspectNote('in', `act ${verb} ${id.slice(0, 8)} from ${nick} sig=${verified ? 'VERIFIED' : 'unverified'}`, verified)
       if (!(this.conn && 'nick' in this.conn && nick === this.conn.nick)) this.toast(`⚙ ${nick} ${verb}ed “${get('act-title') ?? id.slice(0, 8)}”${verified ? ' · sig VERIFIED' : ''}`)
     }
   }
@@ -2014,6 +2051,7 @@ export class App {
       this.toast(`${'⭐'.repeat(stars)} courier run complete — ${this.journal.stars()} stars`)
       this.audio.stinger('spark')
       this.activeQuest = null
+      void this.completeClaimedAct()
     }
     // remember the run in hand so the quest board can show it
     const brief = /carry(?: this sealed phrase)? (?:to )?(#\S+)[^:]*:\s*(PKT-\w+)/i.exec(text) ?? /(PKT-\w+)[\s\S]*?(#\S+)/i.exec(text)

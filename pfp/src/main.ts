@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 // FreeqWorld ID — see the deterministic pixel character your identity derives
 // into, and (soon) set it as your Bluesky avatar. Reveal-only milestone: handle
 // or "surprise me" → PFP preview + PNG download. No login required.
@@ -14,6 +15,9 @@ import { Stage } from './stage'
 import { startPfpOAuth, consumePfpOAuthReturn, setAvatarViaBroker, type PfpOAuthReturn } from './oauth'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
+
+/** '/' on pfp.freeq.at, '/id/' under world.freeq.at — vite bakes it in. */
+const APP_BASE = import.meta.env.BASE_URL
 
 let currentDid: string | null = null
 let currentLabel = ''
@@ -61,6 +65,7 @@ async function paint(): Promise<void> {
 
   $('did').textContent = short(currentDid)
   $('did').title = currentDid
+  rememberInUrl()
   // the same DID also derives a theme tune (silent until asked)
   void revealTheme(currentDid)
   $('label').textContent = currentLabel
@@ -88,11 +93,24 @@ async function generateFromHandle(): Promise<void> {
   }
 }
 
+/** Keep the address bar pointing at whoever is on screen, so copying the URL
+ *  out of the browser gives a link that unfurls as THIS character (the server
+ *  serves per-profile OpenGraph tags for `?u=` as well as `/u/`). */
+function rememberInUrl(): void {
+  if (!currentDid) return
+  const who = currentLabel.startsWith('@') ? currentLabel.slice(1) : currentDid
+  // The identity lives in the QUERY, never the path: oauth.ts derives the
+  // broker's return_to from location.pathname and that allowlist is compiled
+  // into the broker, so a path-based URL would break one-tap avatar writes.
+  const next = `${APP_BASE}?u=${encodeURIComponent(who)}`
+  if (location.pathname + location.search !== next) history.replaceState(null, '', next)
+}
+
 /** The canonical share URL for whoever is on screen. Same origin as the app, so
  *  it works on pfp.freeq.at and at world.freeq.at/id alike. */
 function shareUrl(): string {
   const who = currentLabel.startsWith('@') ? currentLabel.slice(1) : currentDid ?? ''
-  return new URL(`./u/${encodeURIComponent(who)}`, location.href).href
+  return `${location.origin}${APP_BASE}u/${encodeURIComponent(who)}`
 }
 
 function openShare(): void {
@@ -366,5 +384,6 @@ if (oauthReturn) void completeOAuth(oauthReturn)
 
 // ?u=<handle|did> — someone followed a shared link. The share page redirects
 // here so the visitor lands on a playable character rather than a static card.
-const shared = new URLSearchParams(location.search).get('u')
+const fromPath = new RegExp(`^${APP_BASE}u/(.+)$`).exec(location.pathname)?.[1]
+const shared = new URLSearchParams(location.search).get('u') ?? (fromPath ? decodeURIComponent(fromPath) : null)
 if (!oauthReturn && shared) void showSharedIdentity(shared)

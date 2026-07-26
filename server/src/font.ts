@@ -72,6 +72,9 @@ const FONT: Record<string, number> = {
   '~': 0b00000_00000_01001_10101_10010_00000_00000,
   '"': 0b01010_01010_00000_00000_00000_00000_00000,
   '_': 0b00000_00000_00000_00000_00000_00000_11111,
+  // musical notes, because the clip needs them leaving the character
+  '\u266a': 0b00011_00101_00100_00100_00100_11100_11100,
+  '\u266b': 0b01111_01001_01001_01001_11011_11011_00000,
 }
 
 /** em-dash and a few typographic characters map onto drawable equivalents. */

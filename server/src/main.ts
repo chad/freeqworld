@@ -9,11 +9,48 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { cardPng, resolveIdentity, sharePage, stingerWav, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, clipMp4, resolveIdentity, stingerWav, themeWav } from './share.ts'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
 const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
+
+/** Media responses with byte-range support.
+ *
+ *  Not optional for video: Discord, Telegram, iMessage and every browser
+ *  <video> element probe with a Range request first and refuse to play a
+ *  response that answers 200 with the whole file instead of 206. */
+function sendMedia(
+  req: IncomingMessage, res: ServerResponse, body: Buffer, type: string, filename?: string,
+): void {
+  const headers: Record<string, string> = {
+    'content-type': type,
+    'accept-ranges': 'bytes',
+    'cache-control': 'public, max-age=86400',
+  }
+  if (filename) headers['content-disposition'] = `inline; filename="${filename}"`
+
+  const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''))
+  if (range) {
+    const start = range[1] ? Number(range[1]) : 0
+    const end = range[2] ? Math.min(Number(range[2]), body.length - 1) : body.length - 1
+    if (start >= body.length || start > end) {
+      res.writeHead(416, { 'content-range': `bytes */${body.length}` })
+      res.end()
+      return
+    }
+    const slice = body.subarray(start, end + 1)
+    res.writeHead(206, {
+      ...headers,
+      'content-range': `bytes ${start}-${end}/${body.length}`,
+      'content-length': String(slice.length),
+    })
+    res.end(req.method === 'HEAD' ? undefined : slice)
+    return
+  }
+  res.writeHead(200, { ...headers, 'content-length': String(body.length) })
+  res.end(req.method === 'HEAD' ? undefined : body)
+}
 
 /** Hashed build assets are immutable and cached hard; the HTML that POINTS at
  *  them must always be revalidated, or a deploy leaves returning visitors on a
@@ -175,9 +212,15 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   // crawlers don't run JS, so its OG tags can never vary per person).
   // Reachable under /id/... on world.freeq.at and at the root on pfp.freeq.at.
   const share = path.startsWith('/id/') ? path.slice('/id'.length) : path
-  const shareMatch = /^\/(u|card|theme|stinger)\/(.+)$/.exec(share)
-  if (shareMatch) {
-    const [, kind, rawWho] = shareMatch as unknown as [string, string, string]
+  const shareMatch = /^\/(u|card|theme|stinger|clip)\/(.+)$/.exec(share)
+  // The app's own address bar is `?u=<handle>` (that's the URL a visitor copies
+  // after following a share, or after looking someone up). Crawlers asking for
+  // it must get THAT person's card, not the generic site one — so serve the
+  // share page for it too, canonicalised to /u/<handle>.
+  const appQueryWho = (share === '/' || share === '') ? url.searchParams.get('u') : null
+  if (shareMatch || appQueryWho) {
+    const kind = shareMatch ? (shareMatch[1] as string) : 'u'
+    const rawWho = shareMatch ? (shareMatch[2] as string) : appQueryWho!
     // ONE canonical origin for shares, rather than whatever host served this
     // request. The miren router strips X-Forwarded-Host and rewrites
     // X-Forwarded-Proto, so the public hostname simply isn't knowable from the
@@ -191,8 +234,14 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     try {
       const id = await resolveIdentity(rawWho)
       if (kind === 'u') {
-        const html = await sharePage(id, base)
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
+        // the real app, with this person's OpenGraph tags injected: crawlers
+        // read the tags, humans land straight in the app (no interstitial)
+        const index = await readFile(join(PFP_DIST, 'index.html'), 'utf8')
+        const html = await appPageWithOg(id, base, index)
+        res.writeHead(200, {
+          'content-type': 'text/html; charset=utf-8',
+          'cache-control': 'no-cache, must-revalidate',
+        })
         res.end(html)
         return
       }
@@ -208,14 +257,13 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
         res.end(png)
         return
       }
+      if (kind === 'clip') {
+        const mp4 = await clipMp4(id)
+        sendMedia(req, res, mp4, 'video/mp4')
+        return
+      }
       const wav = kind === 'stinger' ? await stingerWav(id) : await themeWav(id)
-      res.writeHead(200, {
-        'content-type': 'audio/wav',
-        'cache-control': 'public, max-age=86400',
-        'content-length': String(wav.byteLength),
-        'content-disposition': `inline; filename="freeqworld-${(id.handle || id.did).replace(/[^a-z0-9.]/gi, '_')}.wav"`,
-      })
-      res.end(Buffer.from(wav))
+      sendMedia(req, res, Buffer.from(wav), 'audio/wav', `freeqworld-${(id.handle || id.did).replace(/[^a-z0-9.]/gi, '_')}.wav`)
       return
     } catch (err) {
       res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
