@@ -1253,7 +1253,7 @@ export class App {
       `<div style="color:var(--dim);font-size:.78rem;margin-top:8px;line-height:1.5">` +
         `Levels are a pure function of witnessed work — no XP for talking, and repeats in the same room the same day pay less. ` +
         `Each completion carries its witness's signature and was verified in this browser; the log itself is public: ` +
-        `<code>/api/v1/channels/%23general/events?event_type=quest_complete</code></div>`,
+        `<code>irc.freeq.at/api/v1/channels/%23general/events?type=quest_complete</code></div>`,
     )
     body.innerHTML = rows.join('')
   }
@@ -2517,6 +2517,8 @@ export class App {
       },
       join: (channel: string) => this.conn?.join(channel),
       doors: () => this.map?.doors ?? [],
+      objects: () => (this.rooms.get(this.channel)?.objects ?? []).map((o) => ({ id: o.id, label: o.label, at: o.position })),
+      openObject: (id: string) => this.showObjectCard(id),
       directory: () => this.town?.directory ?? [],
       audio: () => this.audio.status(),
       // the last few things the music said, for diagnosing "why did I hear that"

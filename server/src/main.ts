@@ -220,7 +220,7 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   // It is a TRANSPORT, not an authority: each completion carries the witness's
   // ed25519 signature and the client verifies it (shared/src/xp.ts), so this
   // route can omit events but cannot invent one. The raw log stays public:
-  //   curl 'https://irc.freeq.at/api/v1/channels/%23general/events?event_type=quest_complete'
+  //   curl 'https://irc.freeq.at/api/v1/channels/%23general/events?type=quest_complete'
   if (path === '/api/xp' || path === '/id/api/xp') {
     const chans = (url.searchParams.get('channels') ?? '#general,#lobby,#dev')
       .split(',').map((c) => c.trim()).filter((c) => c.startsWith('#')).slice(0, 8)

@@ -4,7 +4,7 @@
 // is a computation over work that a witness signed, and anyone can recompute it
 // from the same public log:
 //
-//   curl 'https://irc.freeq.at/api/v1/channels/%23general/events?event_type=quest_complete'
+//   curl 'https://irc.freeq.at/api/v1/channels/%23general/events?type=quest_complete'
 //
 // freeq-server durably stores any TAGMSG carrying `+freeq.at/event=<type>` from
 // an authenticated DID (connection/messaging.rs → coordination_events), indexed
