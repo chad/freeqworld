@@ -41,7 +41,39 @@ export class ChiptunePlayer {
   }
 
   constructor(ctx?: AudioContext) {
-    this.ctx = ctx ?? new AudioContext()
+    const Ctor: typeof AudioContext =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    this.ctx = ctx ?? new Ctor()
+  }
+
+  /** MUST be called synchronously inside a user-gesture handler.
+   *
+   *  iOS only honours `resume()` while the gesture is still on the stack — a
+   *  single `await` before this point (even `setTimeout(0)`) leaves the context
+   *  suspended forever and the page plays silence. Two more Safari details are
+   *  handled here: a one-frame silent buffer to fully open the output pipeline,
+   *  and `audioSession.type = 'playback'` so Web Audio isn't muted by the
+   *  physical ring/silent switch (Safari 16.4+; Web Audio, unlike <audio>,
+   *  otherwise obeys it and iPhones live on silent). */
+  unlock(): void {
+    type Session = { type: string }
+    const nav = navigator as unknown as { audioSession?: Session }
+    try {
+      if (nav.audioSession) nav.audioSession.type = 'playback'
+    } catch {
+      /* not supported — the mute switch may silence us, nothing else to do */
+    }
+    void this.ctx.resume()
+    const buf = this.ctx.createBuffer(1, 1, this.ctx.sampleRate)
+    const src = this.ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(this.ctx.destination)
+    src.start(0)
+  }
+
+  /** False if the browser is still refusing to make sound. */
+  get running(): boolean {
+    return this.ctx.state === 'running'
   }
 
   /** Render (and memoise) a theme's loop. */
@@ -49,7 +81,12 @@ export class ChiptunePlayer {
     const key = JSON.stringify(theme)
     let buf = this.cache.get(key)
     if (!buf) {
-      buf = toAudioBuffer(renderScore(compose(theme), { loop: true, ...opts }), this.ctx)
+      // render at the device's own rate: Safari runs at 48 kHz and resampling a
+      // 44.1 kHz buffer costs memory and (on older iOS) plays back wrong
+      buf = toAudioBuffer(
+        renderScore(compose(theme), { sampleRate: this.ctx.sampleRate, loop: true, ...opts }),
+        this.ctx,
+      )
       this.cache.set(key, buf)
     }
     return buf
@@ -57,7 +94,7 @@ export class ChiptunePlayer {
 
   /** Crossfade into a theme, looping forever. */
   play(theme: Theme, opts: { loop?: boolean; fade?: number; volume?: number } = {}): PlayHandle {
-    // browsers hand you a suspended context until a user gesture
+    // belt and braces: unlock() should already have run inside the gesture
     if (this.ctx.state === 'suspended') void this.ctx.resume()
     const fade = opts.fade ?? 0.4
     const buf = this.buffer(theme)
@@ -98,7 +135,10 @@ export class ChiptunePlayer {
   oneShotScore(score: Score, volume = 0.9): PlayHandle {
     if (this.ctx.state === 'suspended') void this.ctx.resume()
     const source = this.ctx.createBufferSource()
-    source.buffer = toAudioBuffer(renderScore(score, { loop: false, tail: 1 }), this.ctx)
+    source.buffer = toAudioBuffer(
+      renderScore(score, { sampleRate: this.ctx.sampleRate, loop: false, tail: 1 }),
+      this.ctx,
+    )
     const gain = this.ctx.createGain()
     gain.gain.value = volume
     source.connect(gain).connect(this.ctx.destination)

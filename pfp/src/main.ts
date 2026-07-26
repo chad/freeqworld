@@ -8,6 +8,7 @@ import { renderPfp, traitSummary, canvasToPngBlob, canvasToPngBase64, type Varia
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
 import {
   revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme, themeClock, onPlayStateChange,
+  onSilentPlayback,
 } from './theme'
 import { Stage } from './stage'
 import { startPfpOAuth, consumePfpOAuthReturn, setAvatarViaBroker, type PfpOAuthReturn } from './oauth'
@@ -283,6 +284,12 @@ async function doConnect(): Promise<void> {
 
 bind()
 runBeatIndicator()
+onSilentPlayback(() => {
+  // iPhones live on silent, and Web Audio obeys the switch on older Safari
+  $('nowplaying-text').innerHTML =
+    "no sound? on iPhone, flick the <b>ring/silent switch</b> — or turn the volume up"
+  $('nowplaying').classList.add('on')
+})
 onPlayStateChange((on) => {
   $('nowplaying-text').textContent = on
     ? 'now playing — your character moves to it'

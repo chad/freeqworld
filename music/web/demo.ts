@@ -66,6 +66,7 @@ for (const [id, theme] of Object.entries(THEMES)) {
   const b = document.createElement('button')
   b.textContent = theme.name
   b.onclick = () => {
+    player.unlock() // sync, inside the gesture (iOS) — see web.ts
     for (const el of rooms.querySelectorAll('button')) el.classList.remove('on')
     b.classList.add('on')
     playTheme(theme)
@@ -79,6 +80,7 @@ $('#stop').onclick = () => {
 }
 
 $('#mint').onclick = async () => {
+  player.unlock()
   const did = ($('#did') as unknown as HTMLInputElement).value.trim()
   if (!did) return
   const minted = await mintChiptune(did)

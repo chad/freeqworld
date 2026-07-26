@@ -196,7 +196,10 @@ async function mint(input: string, opts: { play?: boolean } = {}): Promise<void>
   }
 }
 
-$('#mint').onclick = () => mint($<HTMLInputElement>('#handle').value)
+$('#mint').onclick = () => {
+  player.unlock() // sync, inside the gesture: iOS won't resume later (see web.ts)
+  void mint($<HTMLInputElement>('#handle').value)
+}
 $<HTMLInputElement>('#handle').addEventListener('keydown', (ev) => {
   if ((ev as KeyboardEvent).key === 'Enter') mint($<HTMLInputElement>('#handle').value)
 })
@@ -206,14 +209,16 @@ for (const h of SUGGESTIONS) {
   const b = document.createElement('button')
   b.textContent = h
   b.onclick = () => {
+    player.unlock()
     $<HTMLInputElement>('#handle').value = h
-    mint(h)
+    void mint(h)
   }
   sugg.append(b)
 }
 
 // ------------------------------------------------------------------ transport
 $('#play').onclick = () => {
+  player.unlock()
   if (currentId >= 0) playEntry(currentId)
 }
 $('#stop').onclick = () => {

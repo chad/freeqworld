@@ -69,13 +69,21 @@ function paintState(state: 'idle' | 'working' | 'playing'): void {
   onChange(state === 'playing')
 }
 
+/** Phones get a 16-bar loop instead of 32: same key, same motif, same melody
+ *  — it just comes round sooner. Halves the render time and the memory, which
+ *  on iOS is the difference between music and a killed tab. */
+function loopBars(): number {
+  const small = typeof matchMedia === 'function' && matchMedia('(max-width: 820px)').matches
+  return small ? 16 : 32
+}
+
 /** Called whenever the revealed identity changes. Mints (cheap) but makes no
  *  sound until asked. */
 export async function revealTheme(did: string): Promise<void> {
   if (mintedDid === did) return // variant switch — leave the music playing
   stopTheme()
   mintedDid = did
-  minted = await mintChiptune(did, 32)
+  minted = await mintChiptune(did, loopBars())
   $('theme-traits').innerHTML = chips(minted)
   $('theme-name').textContent = minted.theme.name
   $('theme').classList.remove('hidden')
@@ -96,23 +104,37 @@ export async function toggleTheme(): Promise<void> {
     stopTheme()
     return
   }
+  // ---- everything up to the first await must stay inside the gesture ----
+  player ??= new ChiptunePlayer()
+  player.unlock()
+  // ----------------------------------------------------------------------
   paintState('working')
-  // yield so the button repaints before the (synchronous) render
-  await new Promise((r) => setTimeout(r, 16))
+  // now yield, so the button repaints before the (synchronous) render
+  await new Promise((r) => requestAnimationFrame(() => r(null)))
   try {
-    player ??= new ChiptunePlayer()
     player.play(minted.theme, { fade: 0.35 })
     playing = true
     paintState('playing')
+    // Safari can still refuse (ring/silent switch on an iPhone, or a context
+    // that never left 'suspended'). Say so instead of pretending to play.
+    setTimeout(() => {
+      if (playing && !player?.running) onSilent()
+    }, 400)
   } catch {
     paintState('idle')
   }
+}
+
+let onSilent: () => void = () => {}
+export function onSilentPlayback(fn: () => void): void {
+  onSilent = fn
 }
 
 /** Just the 3–5 note calling card — what plays when you walk into a room. */
 export async function playStinger(): Promise<void> {
   if (!mintedDid) return
   player ??= new ChiptunePlayer()
+  player.unlock() // sync, still inside the click
   player.oneShotScore(await mintStinger(mintedDid))
 }
 
@@ -128,4 +150,30 @@ export function downloadTheme(label: string): void {
   a.download = `freeqworld-theme-${name}.wav`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// A tiny diagnostic for real-device reports ("it's silent on my phone"): open
+// the console and read `freeqAudio`. Costs nothing, saves a lot of guessing.
+// (Guarded — this module is also imported by the node test environment.)
+if (typeof window !== 'undefined') {
+  ;(window as unknown as Record<string, unknown>).freeqAudio = {
+    get state(): string {
+      return player ? player.ctx.state : 'no-context-yet'
+    },
+    get running(): boolean {
+      return player?.running ?? false
+    },
+    get sampleRate(): number {
+      return player?.ctx.sampleRate ?? 0
+    },
+    get bars(): number {
+      return minted?.theme.bars ?? 0
+    },
+    get position(): unknown {
+      return player?.position ?? null
+    },
+    get tune(): unknown {
+      return minted?.card ?? null
+    },
+  }
 }

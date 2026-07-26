@@ -201,6 +201,41 @@ opening figure — and the character is shown *alive*, moving to it.
   literally; the minted tune snaps that same contour into its own key.
 - The share post now reads "Your identity has a face — and a theme tune."
 
+### iOS: four traps, all of them silent failures
+
+Worth writing down, because the page *looked* like it was playing on an iPhone
+while making no sound at all — the button said "pause", the character danced.
+
+1. **`resume()` only works inside the gesture.** `toggleTheme()` used to
+   `await setTimeout(16)` (to repaint the button) *before* touching the
+   AudioContext. That yield ends the task, iOS drops the user activation, the
+   context stays `suspended` forever, and `start()` on a suspended context is a
+   no-op that throws nothing. Fix: `ChiptunePlayer.unlock()` runs
+   **synchronously first thing** in every play handler — resume + a one-frame
+   silent buffer to open the pipeline — and only then do we yield and render.
+   Regression-tested by emulating the policy in WebKit (see below).
+2. **The ring/silent switch mutes Web Audio** (unlike `<audio>` elements), and
+   iPhones live on silent. `navigator.audioSession.type = 'playback'` fixes it
+   on Safari 16.4+; older Safari can't be fixed, so if the context is still not
+   `running` 400 ms after play we say so instead of pretending: "no sound? flick
+   the ring/silent switch".
+3. **Memory.** `renderScore` used to allocate one full-length buffer per NES
+   channel (~135 MB for a 32-bar loop at 48 kHz) before mixing down. It now
+   mixes each note straight into L/R (~54 MB), and phones get a 16-bar loop
+   (same key, same motif, same melody — it just comes round sooner).
+4. **Sample rate.** Safari runs at 48 kHz; we rendered at 44.1 kHz and made the
+   browser resample. Buffers are now rendered at `ctx.sampleRate`.
+
+`window.freeqAudio` exposes `state / running / sampleRate / bars / position` for
+diagnosing this from a real device's console.
+
+**Testing it:** Playwright's WebKit on macOS does *not* enforce the iOS gesture
+or mute rules, so an emulated iPhone run passed happily against the broken
+build. `/tmp`-style harnesses that just drive the UI can't catch this class of
+bug; you have to model the policy — wrap `AudioContext` so `resume()` only
+takes effect while a gesture is on the stack, then assert that at least one
+`resume()` call was made inside one.
+
 ## Build / serve / deploy
 
 - New source dir `pfp/` (or `client-id/`) with its own tiny `vite` build →

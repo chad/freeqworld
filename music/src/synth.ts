@@ -4,7 +4,7 @@
 
 import { patch, type Patch } from './instruments.ts'
 import { midiToFreq } from './theory.ts'
-import { monophonize, ticksToSeconds, type Channel, type Note, type Score } from './score.ts'
+import { CHANNELS, monophonize, ticksToSeconds, type Channel, type Note, type Score } from './score.ts'
 
 export interface RenderOptions {
   sampleRate?: number
@@ -65,8 +65,14 @@ function envelope(p: Patch, t: number, dur: number): number {
   return k <= 0 ? 0 : level(dur) * k
 }
 
-/** Render one note into `out` (mono), starting at sample `start`. */
-function renderNote(out: Float32Array, start: number, note: Note, dur: number, sr: number): void {
+/** Render one note straight into the stereo mix at sample `start`.
+ *  (Mixing here rather than into per-channel lane buffers keeps peak memory to
+ *  two buffers instead of eight — a 90-second loop is ~30 MB, not ~130 MB,
+ *  which is the difference between playing and being killed on a phone.) */
+function renderNote(
+  outL: Float32Array, outR: Float32Array, gainL: number, gainR: number,
+  start: number, note: Note, dur: number, sr: number,
+): void {
   const p = patch(note.patch)
   const vel = note.vel ?? 1
   const total = dur + (p.release ?? 0.02) + (p.volSeq ? 0.02 : 0)
@@ -81,7 +87,7 @@ function renderNote(out: Float32Array, start: number, note: Note, dur: number, s
   for (let i = 0; i < n; i++) {
     const idx = start + i
     if (idx < 0) continue
-    if (idx >= out.length) break
+    if (idx >= outL.length) break
     const t = i / sr
     const env = envelope(p, t, dur)
     if (env <= 0 && t > dur) break
@@ -137,7 +143,9 @@ function renderNote(out: Float32Array, start: number, note: Note, dur: number, s
       }
     }
 
-    out[idx] = out[idx]! + s * env * vel * p.gain
+    const v = s * env * vel * p.gain
+    outL[idx] = outL[idx]! + v * gainL
+    outR[idx] = outR[idx]! + v * gainR
   }
 }
 
@@ -150,29 +158,22 @@ export function renderScore(score: Score, opts: RenderOptions = {}): Audio {
   const tailN = Math.ceil(tail * sr)
   const total = bodyN + tailN
 
-  const lanes = new Map<Channel, Float32Array>()
-  for (const note of monophonize(score.notes)) {
-    let buf = lanes.get(note.ch)
-    if (!buf) {
-      buf = new Float32Array(total)
-      lanes.set(note.ch, buf)
-    }
-    const start = Math.round(ticksToSeconds(note.t, score.bpm) * sr)
-    const dur = Math.max(0.01, ticksToSeconds(note.dur, score.bpm))
-    renderNote(buf, start, note, dur, sr)
-  }
-
   const left = new Float32Array(total)
   const right = new Float32Array(total)
   const master = opts.masterGain ?? 0.5
-  for (const [ch, buf] of lanes) {
+  const pan = new Map<Channel, [number, number]>()
+  for (const ch of CHANNELS) {
     const mix = CHANNEL_MIX[ch]
-    const l = master * mix.gain * Math.cos(((mix.pan + 1) * Math.PI) / 4)
-    const r = master * mix.gain * Math.sin(((mix.pan + 1) * Math.PI) / 4)
-    for (let i = 0; i < total; i++) {
-      left[i] = left[i]! + buf[i]! * l
-      right[i] = right[i]! + buf[i]! * r
-    }
+    pan.set(ch, [
+      master * mix.gain * Math.cos(((mix.pan + 1) * Math.PI) / 4),
+      master * mix.gain * Math.sin(((mix.pan + 1) * Math.PI) / 4),
+    ])
+  }
+  for (const note of monophonize(score.notes)) {
+    const [l, r] = pan.get(note.ch)!
+    const start = Math.round(ticksToSeconds(note.t, score.bpm) * sr)
+    const dur = Math.max(0.01, ticksToSeconds(note.dur, score.bpm))
+    renderNote(left, right, l, r, start, note, dur, sr)
   }
 
   // seamless loop: ring-out from past the loop point wraps into the head
