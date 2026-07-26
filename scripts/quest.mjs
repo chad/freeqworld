@@ -115,8 +115,8 @@ export function questCanonical(payload) {
 }
 
 /** The payload a witness signs. Flat strings only, so the canonical is stable. */
-export function completionPayload({ player, kind, channel, bonus, ts, witness }) {
-  return {
+export function completionPayload({ player, kind, channel, bonus, ts, witness, via }) {
+  const p = {
     player: String(player),
     kind: String(kind),
     channel: String(channel),
@@ -124,6 +124,10 @@ export function completionPayload({ player, kind, channel, bonus, ts, witness })
     ts: String(ts ?? Math.floor(Date.now() / 1000)),
     witness: String(witness),
   }
+  // oracle-attested work records WHO the witness believed, so the weaker tier is
+  // visible in the public log instead of being indistinguishable from the rest
+  if (via) p.via = String(via)
+  return p
 }
 
 // --- invites -----------------------------------------------------------------

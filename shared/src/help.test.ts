@@ -6,7 +6,7 @@ import { LEVELS, QUEST_KINDS } from './xp'
 // rekindle required a day of silence when nothing checked for it.
 describe('the quest catalogue the help page renders', () => {
   it('describes every run the witness can actually confirm', () => {
-    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'post', 'face', 'referral', 'escort'])
+    expect(QUEST_KINDS.map((q) => q.id)).toEqual(['courier', 'survey', 'rekindle', 'commit', 'post', 'face', 'referral', 'escort'])
   })
 
   it('pays most for bringing a new identity in', () => {
@@ -44,6 +44,10 @@ describe('the quest catalogue the help page renders', () => {
     expect(QUEST_KINDS.find((q) => q.id === 'face')!.witnessedBy).toMatch(/no oracle/)
     // nothing may claim to be verified "automatically" or by the client
     expect(claims).not.toMatch(/client-side|trust me|automatic/)
+    // and the one action that DOES trust a third party must say so plainly
+    const commit = QUEST_KINDS.find((q) => q.id === 'commit')!
+    expect(commit.witnessedBy).toMatch(/oracle/i)
+    expect(commit.witnessedBy).toMatch(/trusts a third party/)
   })
 
   it('only promises unlocks that the ladder actually contains', () => {
@@ -51,5 +55,29 @@ describe('the quest catalogue the help page renders', () => {
     expect(unlocks.length).toBeGreaterThanOrEqual(8)
     // the help page prints these verbatim; they must name real capabilities
     expect(unlocks.map((l) => l.unlock).join(' ')).toMatch(/survey|rekindle|escort|familiar|guild|countersign/)
+  })
+})
+
+// The taxonomy is the point: an action either needs no third party, or it says
+// which one it needed. Nothing may be silently in between.
+describe('external actions declare their trust tier', () => {
+  const EXTERNAL = ['face', 'post', 'commit', 'referral']
+
+  it('marks exactly one action as oracle-attested', () => {
+    const oracles = QUEST_KINDS.filter((q) => /oracle/i.test(q.witnessedBy))
+    expect(oracles.map((q) => q.id)).toEqual(['commit'])
+  })
+
+  it('says where the evidence comes from for every external action', () => {
+    for (const id of EXTERNAL) {
+      const q = QUEST_KINDS.find((k) => k.id === id)!
+      expect(q.witnessedBy, id).toMatch(/repo|hash|signed|witnessed|github|oracle/i)
+    }
+  })
+
+  it('never claims verification it cannot do', () => {
+    for (const q of QUEST_KINDS) {
+      expect(q.witnessedBy, q.id).not.toMatch(/we trust|assume|probably|should be/i)
+    }
   })
 })

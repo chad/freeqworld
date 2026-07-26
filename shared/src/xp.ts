@@ -51,6 +51,9 @@ const LADDER_FOR_KIND: Record<string, Ladder> = {
 /** Weighted by how hard the work is to fake, not by how long it takes.
  *  An escort needs a stranger to voluntarily answer, so it pays most. */
 const XP_BY_KIND: Record<string, number> = {
+  // landing a commit: the ONLY tier-2 action here — an oracle (GitHub) attests
+  // that the commit exists, so the witness records which oracle it believed.
+  commit: 30,
   // posting your standing: read out of the player's OWN repo (their PDS, not an
   // aggregator). Paid once ever — paying for repeat posts would make us spam.
   post: 25,
@@ -144,6 +147,14 @@ export const QUEST_KINDS: QuestKind[] = [
     alwaysDouble: true,
   },
   {
+    id: 'commit',
+    label: 'Land a commit',
+    ask: 'cartographer, quest commit owner/repo',
+    doThis: 'put the phrase it gives you in a commit message and push it',
+    witnessedBy: 'an ORACLE run: GitHub is asked whether the commit exists, and the attestation records that it was GitHub who said so — the only run here that trusts a third party',
+    xp: XP_BY_KIND.commit!,
+  },
+  {
     id: 'post',
     label: 'Post your standing',
     ask: 'cartographer, quest post',
@@ -191,6 +202,8 @@ export interface Completion {
   ts: number
   /** the DID that witnessed and signed it */
   witness: string
+  /** for oracle-attested work: who the witness believed (e.g. 'github') */
+  via?: string
   /** did the witness signature check out? unverified never scores */
   verified: boolean
 }
@@ -337,6 +350,7 @@ export async function completionsFromEvents(
     out.push({
       player: p.player,
       kind: p.kind,
+      via: p.via,
       channel: p.channel ?? '',
       bonus: p.bonus === '1' || p.bonus === 'true',
       ts: Number(p.ts ?? e.timestamp ?? 0),

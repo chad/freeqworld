@@ -65,7 +65,7 @@ const POS_TAG = '+freeq.at/world-pos'
 
 /** Which run the courier asked for. Defaults to the classic courier run. */
 function questKind(text) {
-  const m = /quest\s+(survey|rekindle|escort|referral|invite|face|avatar|post|share)/i.exec(text)
+  const m = /quest\s+(survey|rekindle|escort|referral|invite|face|avatar|post|share|commit)/i.exec(text)
   const kind = m ? m[1].toLowerCase() : 'courier'
   return kind === 'invite' ? 'referral' : kind === 'avatar' ? 'face' : kind === 'share' ? 'post' : kind
 }
@@ -97,19 +97,23 @@ const AGENTS = [
     persona: 'The Cartographer',
     brain: (ctx) => {
       // holding a post run and telling us it's up
-      if (/\b(posted|shared|done)\b/i.test(ctx.text)) {
+      if (/\b(posted|shared|done|pushed)\b/i.test(ctx.text)) {
         const held = ctx.heldQuest?.(ctx.from)
         const who = ctx.didFor?.(ctx.from)
         if (held?.kind === 'post' && who) {
           ctx.verifyPost(ctx.from, who, held)
           return `checking your feed for it now, ${ctx.from}.`
         }
+        if (held?.kind === 'commit' && who) {
+          ctx.verifyCommit(ctx.from, who, held)
+          return `asking github about ${held.repo} now, ${ctx.from}.`
+        }
       }
       if (/quest/i.test(ctx.text)) {
         // issueQuest returns the brief it sent — or a refusal, when there is no
         // room quiet enough to rekindle or nobody new to escort. Announcing an
         // envelope that was never sealed is the interface lying about the world.
-        const result = ctx.issueQuest(ctx.from, false, questKind(ctx.text))
+        const result = ctx.issueQuest(ctx.from, false, questKind(ctx.text), ctx.text)
         const refused = typeof result === 'string' && !/^(COURIER RUN|SURVEY|REKINDLE|ESCORT|your envelope)/.test(result)
         return refused
           ? result
@@ -226,7 +230,7 @@ for (const [i, agent] of AGENTS.entries()) {
     return `COURIER RUN for ${nick}: carry this sealed phrase to ${q.target} and say it aloud: ${q.phrase} — i keep a post there and will confirm the delivery myself.${q.bonus ? ' that room is quiet; the run pays double.' : ''}`
   }
 
-  const issueQuest = (nick, viaDm = false, kind = 'courier') => {
+  const issueQuest = (nick, viaDm = false, kind = 'courier', rawText = '') => {
     // quieter rooms pay double — couriers carry life where there is none
     const ranked = CHANNELS.filter((c) => c !== '#general').sort((x, y) => (history.get(x)?.length ?? 0) - (history.get(y)?.length ?? 0))
     const quietest = ranked[0] ?? CHANNELS[0]
@@ -262,6 +266,29 @@ for (const [i, agent] of AGENTS.entries()) {
         return `every room i watch has been spoken in today, ${nick} — nothing to rekindle. say "quest" for a courier run, or come back when somewhere has gone quiet.`
       }
       q = { kind: 'rekindle', target: stale, bonus: true, quietHours: Math.floor(quietForMs(stale) / 3600_000) }
+    } else if (kind === 'commit') {
+      const player = client.getDidForNick?.(nick)
+      if (!player) {
+        try { client.whois(nick) } catch { /* offline */ }
+        return `i need to know your DID first, ${nick} — ask again in a moment.`
+      }
+      if (creditedReferrals.has(`commit|${player}`)) {
+        return `you've already landed one, ${nick} — that run pays once.`
+      }
+      const repoMatch = /([\w.-]+\/[\w.-]+)/.exec(rawText ?? '')
+      const held = quests.get(nick.toLowerCase())
+      if (held?.kind === 'commit') {
+        void verifyCommitQuest(nick, player, held)
+        return `asking github about ${held.repo} now, ${nick}.`
+      }
+      if (!repoMatch) {
+        return `name the repository, ${nick} — "quest commit owner/repo" — and i'll give you a phrase to put in a commit message.`
+      }
+      const nonce = `FQ-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+      quests.set(nick.toLowerCase(), { kind: 'commit', target: CHANNELS[0], repo: repoMatch[1], nonce, bonus: false })
+      saveQuests()
+      console.log(`[${agent.nick}] commit quest issued: ${nick} ${repoMatch[1]} ${nonce}`)
+      return `LAND A COMMIT, ${nick}: put ${nonce} in a commit message on ${repoMatch[1]}, push it, then say "cartographer, commit done". fair warning — i verify this one by asking github, so it is the one run here that trusts somebody else. the attestation will say so.`
     } else if (kind === 'post') {
       const player = client.getDidForNick?.(nick)
       if (!player) {
@@ -347,11 +374,11 @@ for (const [i, agent] of AGENTS.entries()) {
    *  invent one. TAGMSG only — a plain IRC client sees nothing, and this is
    *  deliberately not the SDK's emitEvent(), which also sends a PRIVMSG. */
   /** Attest for a DID we already hold (referrals know the inviter's DID). */
-  const attestCompletionForDid = (playerDid, kind, channel, bonus) => {
+  const attestCompletionForDid = (playerDid, kind, channel, bonus, via) => {
     if (!playerDid) return
     try {
       const payload = completionPayload({
-        player: playerDid, kind, channel, bonus: Boolean(bonus), witness: did,
+        player: playerDid, kind, channel, bonus: Boolean(bonus), witness: did, via,
       })
       const sig = `ed25519:${actKid(kp.publicKey)}:${b64url(
         nacl.sign.detached(new TextEncoder().encode(questCanonical(payload)), kp.secretKey),
@@ -432,6 +459,44 @@ for (const [i, agent] of AGENTS.entries()) {
     }
     if (seen.has(String(redeemer).toLowerCase())) return { ok: false, reason: 'already-known', payload }
     return { ok: true, payload }
+  }
+
+  // -- "land a commit" --------------------------------------------------------
+  //
+  // The ONLY tier-2 action here: GitHub is an oracle, so we cannot verify this
+  // the way we verify a repo record or an image hash. What we can do is be
+  // honest about it — the attestation records that it was GITHUB the witness
+  // believed, so the weaker evidence is visible in the public log rather than
+  // being indistinguishable from work that needed no third party at all.
+  const checkCommit = async (repo, nonce) => {
+    const r = await fetch(`https://api.github.com/repos/${repo}/commits?per_page=30`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'freeqworld-cartographer' },
+    })
+    if (r.status === 403 || r.status === 429) throw new Error('github is rate-limiting me')
+    if (!r.ok) throw new Error(`github said ${r.status}`)
+    const commits = await r.json()
+    const hit = (Array.isArray(commits) ? commits : []).find((c) =>
+      String(c?.commit?.message ?? '').includes(nonce))
+    return hit ? { sha: String(hit.sha ?? '').slice(0, 10), url: String(hit.html_url ?? '') } : null
+  }
+
+  const verifyCommitQuest = async (nick, player, quest) => {
+    try {
+      const found = await checkCommit(quest.repo, quest.nonce)
+      if (!found) {
+        client.sendMessage(nick, `not in the last 30 commits on ${quest.repo}, ${nick} — push it and say "commit done" again. the phrase is ${quest.nonce}.`)
+        return
+      }
+      quests.delete(nick.toLowerCase())
+      creditedReferrals.add(`commit|${player}`)
+      saveQuests(); saveInvites()
+      console.log(`[${agent.nick}] commit verified for ${player.slice(0, 24)}… ${quest.repo}@${found.sha} (via github)`)
+      attestCompletionForDid(player, 'commit', CHANNELS[0], false, 'github')
+      client.sendMessage(nick, `found ${found.sha} on ${quest.repo}, ${nick} — credited. note that i took github's word for it: the attestation says so, so anyone reading the log knows this one leaned on an oracle.`)
+    } catch (e) {
+      console.log(`[${agent.nick}] commit check failed:`, String(e).slice(0, 120))
+      client.sendMessage(nick, `i couldn't ask github just now, ${nick} (${String(e).slice(0, 60)}) — try me again shortly.`)
+    }
   }
 
   // -- "post your standing" ---------------------------------------------------
@@ -671,6 +736,7 @@ for (const [i, agent] of AGENTS.entries()) {
     // the persona needs these to check a standing post it is told about
     didFor: (n) => client.getDidForNick?.(n),
     verifyPost: (n, who, held) => void verifyStandingPost(n, who, held),
+    verifyCommit: (n, who, held) => void verifyCommitQuest(n, who, held),
     heldQuest: (n) => quests.get(String(n).toLowerCase()),
   })
 
