@@ -116,6 +116,9 @@ export class App {
   /** the visitor has heard their own theme this session */
   private heardOwnTheme = false
   private stepsTimer = 0
+  /** last rendered checklist markup, so a repaint that changes nothing doesn't
+   *  replace the DOM under someone's finger */
+  private stepsHtml = ''
   private cueLog: { kind: string; name: string; did?: string; reason?: string; at: number }[] = []
   private log: DurableEvent[] = []
   private lastMessageId: string | null = null
@@ -1364,7 +1367,24 @@ export class App {
       return
     }
     const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 820px)').matches
-    el('firststeps-body').innerHTML = narrow ? renderCompact(list) : renderSteps(list)
+    const html = narrow ? renderCompact(list) : renderSteps(list)
+    if (html === this.stepsHtml) {
+      panel.classList.remove('hidden')
+      return
+    }
+    this.stepsHtml = html
+    el('firststeps-body').innerHTML = html
+    // typing an exact phrase is real friction, especially on a phone: do it for
+    // them, in the room, so the Cartographer witnesses it exactly as usual
+    for (const btn of el('firststeps-body').querySelectorAll<HTMLElement>('button[data-say]')) {
+      btn.addEventListener('click', () => {
+        const say = btn.dataset.say
+        if (!say || !this.conn) return
+        this.conn.sendMessage(this.channel, say)
+        this.toast(`asked the Cartographer — watch the chat`)
+        window.setTimeout(() => void this.paintFirstSteps(), 6000)
+      })
+    }
     panel.classList.remove('hidden')
   }
 

@@ -30,6 +30,9 @@ export interface Step {
   done: boolean
   /** what to type or press, when there is something to do */
   how?: string
+  /** a message the client can send on their behalf — typing an exact phrase is
+   *  real friction, especially on a phone */
+  say?: string
 }
 
 export function steps(s: StepState): Step[] {
@@ -60,6 +63,7 @@ export function steps(s: StepState): Step[] {
         : 'the Cartographer watches the room and signs what it sees',
       done: runs > 0,
       how: 'say "cartographer, quest" in the chat',
+      say: 'cartographer, quest',
     },
     {
       id: 'face',
@@ -78,6 +82,7 @@ export function steps(s: StepState): Step[] {
         : 'an invitation carries your name, signed — it pays the most of anything here',
       done: (ladders?.herald ?? 0) > 0,
       how: 'say "cartographer, quest referral"',
+      say: 'cartographer, quest referral',
     },
   ]
 }
@@ -119,7 +124,9 @@ export function renderCompact(list: Step[]): string {
       <span style="color:var(--dim);font-size:.78rem">${done} of ${total}</span>
     </div>
     <div style="margin-top:4px">${next.label}</div>
-    <div style="color:var(--cyan);font-size:.78rem;line-height:1.4">${next.how ?? ''}</div>`
+    ${next.say
+      ? `<button data-say="${next.say}" style="margin-top:4px;padding:4px 8px;font-size:.78rem;width:100%">ask the Cartographer</button>`
+      : `<div style="color:var(--cyan);font-size:.78rem;line-height:1.4">${next.how ?? ''}</div>`}`
 }
 
 export function render(list: Step[]): string {
@@ -134,8 +141,12 @@ export function render(list: Step[]): string {
         <div>
           <div style="color:${s.done ? 'var(--dim)' : 'var(--ink)'}">${s.label}</div>
           <div style="color:var(--dim);font-size:.78rem;line-height:1.4">${s.detail}${
-            !s.done && s.how ? ` — <span style="color:var(--cyan)">${s.how}</span>` : ''
-          }</div>
+            !s.done && s.how && !s.say ? ` — <span style="color:var(--cyan)">${s.how}</span>` : ''
+          }</div>${
+            !s.done && s.say
+              ? `<button data-say="${s.say}" style="margin-top:4px;padding:3px 8px;font-size:.76rem">ask the Cartographer</button>`
+              : ''
+          }
         </div>
       </div>`
     })
