@@ -9,11 +9,16 @@
 //
 //  1. No canvas. `canvas.toBlob()` output depends on the browser's PNG encoder,
 //     so the app must upload THESE bytes, not its own render.
-//  2. No transcendental maths in the pixel loop. Math.pow / hypot / sin / cos
+//  2. No LOOSELY-SPECIFIED maths in the pixel loop. Math.pow / hypot / sin / cos
 //     are not guaranteed bit-identical across engine versions, and one ULP of
-//     difference rounds to a different byte and a different CID. Everything
-//     below is integer arithmetic over squared distances, which also gives the
-//     banded backdrop a properly 1992 look.
+//     difference rounds to a different byte and a different CID. Math.sqrt IS
+//     safe — IEEE-754 requires it to be correctly rounded, like + - * / — so the
+//     glow uses sqrt over integer squared distances for even, smooth banding.
+//
+// ⚠ ONCE PEOPLE WEAR THIS, THE RENDERER IS A CONSENSUS ARTIFACT. Changing any
+//   pixel changes every CID, and everyone who verified stops verifying. Treat a
+//   change here like a change to shared/src/avatar.ts: don't, unless you also
+//   plan to re-verify the world.
 
 import { deriveAvatar, type Avatar } from '../../shared/src/avatar'
 import { rawCid } from '../../shared/src/cid'
@@ -27,7 +32,7 @@ const INK: RGB = [13, 13, 20]
 
 /** Concentric quantised bands instead of a smooth gradient: integer-exact, and
  *  it reads as a pixel-art glow rather than a photographic one. */
-function drawGlow(bmp: Bitmap, size: number, hue: number, sat: number, bands = 10): void {
+function drawGlow(bmp: Bitmap, size: number, hue: number, sat: number, bands = 48): void {
   const cx = size >> 1
   const cy = Math.round(size * 0.44)
   // radius² of the outermost band, in integer pixels
@@ -47,8 +52,9 @@ function drawGlow(bmp: Bitmap, size: number, hue: number, sat: number, bands = 1
       const dx = x - cx
       const d2 = dx * dx + dy2
       if (d2 >= rMax2) continue
-      // integer band index: (d2 * bands) / rMax2, truncated
-      const band = Math.min(bands - 1, Math.floor((d2 * bands) / rMax2))
+      // sqrt gives even band spacing (squared distance crowds them at the rim);
+      // correctly rounded, so still bit-identical everywhere
+      const band = Math.min(bands - 1, Math.floor((Math.sqrt(d2) * bands) / rMax))
       const c = palette[band]!
       const i = (y * size + x) * 4
       bmp.data[i] = c[0]
@@ -100,7 +106,7 @@ export async function renderFace(
   fillRect(bmp, 0, 0, size, size, INK)
   drawGlow(bmp, size, bd.h, bd.s)
 
-  const floorY = Math.round(size * 0.72)
+  const floorY = Math.round(size * 0.7)
   if (variant === 'explorer') {
     fillRect(bmp, 0, floorY, size, size - floorY, hslToRgb(bd.h, bd.s * 0.5, 0.12))
     // lit floor tiles, on an integer grid
@@ -131,8 +137,9 @@ export async function renderFace(
     fillRect(bmp, 0, top + 15 * scale, size, size, INK, 1)
     drawGlowFooter(bmp, size, bd.h, bd.s)
   } else {
-    drawSprite(bmp, avatar, x, floorY - 24 * scale, scale)
-    fillRect(bmp, x + scale * 3, floorY, spriteW - scale * 6, Math.max(2, Math.round(scale * 0.5)), [0, 0, 0], 0.4)
+    const feet = Math.round(size * 0.84)
+    drawSprite(bmp, avatar, x, feet - 24 * scale, scale)
+    fillRect(bmp, x + scale * 3, feet - 2, spriteW - scale * 6, Math.max(2, Math.round(scale * 0.5)), [0, 0, 0], 0.4)
   }
 
   drawRing(bmp, size, Math.round(size * 0.47), Math.max(2, Math.round(size * 0.016)), accent, 0.22)

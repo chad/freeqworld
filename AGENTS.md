@@ -60,6 +60,13 @@ boxd exec freeqworld -- 'tail -n 20 /tmp/agents-svc.log'                        
   Rust-generated vectors by `shared/src/act.test.ts`. Don't delete one without
   solving the bare-node import problem; that test is what stops them drifting.
 
+- **`server/src/face.ts` becomes frozen the moment anyone wears it.** The
+  portrait is verified by hashing its bytes, so changing one pixel changes every
+  CID and everybody who verified silently stops verifying. Treat it like
+  `shared/src/avatar.ts`. If you must change it, plan to re-verify the world.
+  Related: only `Math.sqrt` (and `+ - * /`) are correctly rounded per IEEE-754 —
+  `pow`, `hypot`, `sin`, `cos` are not, and one ULP is one wrong byte.
+
 ## Bugs that are pinned by tests — read the test before "fixing" the behaviour
 
 - Spawn ranking (`shared/src/liveWorld.test.ts`): the home-channel bonus applies
