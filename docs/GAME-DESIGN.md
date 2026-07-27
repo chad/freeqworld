@@ -124,11 +124,10 @@ including ones who never open the game.
 
 ## Next build (recommended order, from the handoff)
 
-1. **Familiars as real spawned agents** — the showpiece. The wisp/bird following
-   players is decorative; `spawned_agents` (parent_did → child_did,
-   capabilities_json) and `agent_capability_grants` already exist. Make the
-   familiar a real `did:key` agent you dispatch to fetch history from a room
-   you're not in. The provenance UI (`agent_chain`) is already built.
+1. **Familiars as real spawned agents** — the showpiece. Now fully planned in
+   [FAMILIARS-PLAN.md](FAMILIARS-PLAN.md) with the protocol facts verified
+   against the server source (AGENT SPAWN/MSG/DESPAWN all shipped; children die
+   with the parent session; CHATHISTORY needs membership).
 2. **Act completion from the agent side**, plus capabilities as classes.
 3. **Make the demo-town furniture real** — 24 of 30 objects are scenery. Best
    conversions: issue-board → open handoff offers, help-desk → dispatch your
