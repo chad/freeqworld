@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { compose } from './compose'
 import { mintChiptune } from './mint'
-import { encodeMusicXml, layOutMeasures, noteType, spell } from './musicxml'
+
+// Minting composes and is the slowest thing in this file; do it once.
+const mintOnce = (() => {
+  const cache = new Map<string, Promise<Awaited<ReturnType<typeof mintChiptune>>>>()
+  return (did: string, bars: number) => {
+    const key = `${did}:${bars}`
+    let hit = cache.get(key)
+    if (!hit) {
+      hit = mintChiptune(did, bars)
+      cache.set(key, hit)
+    }
+    return hit
+  }
+})()
+import {
+  encodeMusicXml, layOutMeasures, NOTATION_GRID, noteType, quantizeForNotation, spell,
+} from './musicxml'
 import { ticksPerBar, TPQ, type Note, type Score } from './score'
 
 const SCORE: Score = {
@@ -105,7 +121,7 @@ describe('measure layout', () => {
   })
 
   it('every measure of a real theme is exactly full', async () => {
-    const minted = await mintChiptune('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
+    const minted = await mintOnce('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
     const score = compose(minted.theme)
     const barTicks = ticksPerBar(score.meter)
     for (const lane of ['pulse1', 'pulse2', 'triangle', 'aux'] as const) {
@@ -174,7 +190,7 @@ describe('MusicXML document', () => {
   })
 
   it('exports a real minted theme with its DID recorded', async () => {
-    const minted = await mintChiptune('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
+    const minted = await mintOnce('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
     const score = compose(minted.theme)
     const xml = encodeMusicXml(score, {
       title: minted.theme.name,
@@ -188,5 +204,66 @@ describe('MusicXML document', () => {
     for (const durs of measureDurations(xml)) {
       for (const d of durs) expect(d).toBe(ticksPerBar(score.meter))
     }
+  })
+})
+
+describe('written durations vs sounding durations', () => {
+  // The composer emits envelope lengths: a note in a 24-tick slot is written
+  // dur:22 so the synth re-triggers cleanly. Exported literally that is 11/24 of
+  // a quarter plus a 1/24 rest — not a note value. These tests pin the fix.
+  const bass: Note[] = Array.from({ length: 8 }, (_, i) => ({
+    ch: 'triangle' as const, patch: 'bass', t: i * 24, dur: 22, midi: 36,
+  }))
+
+  it('fills the slot when the shortfall is just the envelope', () => {
+    const q = quantizeForNotation(bass, 8 * 24)
+    expect(q.every((x) => x.dur === 24), 'every bass note should be a written eighth').toBe(true)
+    expect(q.some((x) => x.staccato)).toBe(false) // 22/24 is not staccato
+  })
+
+  it('emits no rests at all for a continuous stream', () => {
+    const measures = layOutMeasures(bass, ticksPerBar([4, 4]), 8 * 24)
+    const rests = measures.flat().filter((s) => s.note === null)
+    expect(rests.length, 'a continuous bass line needs no rests').toBe(0)
+  })
+
+  it('keeps a real rest when the composer meant one', () => {
+    // sounding 24 in a 48-tick slot: half the slot is silence, and writing a
+    // quarter note there would be a lie about the rhythm
+    const detached: Note[] = [
+      { ch: 'pulse2', patch: 'stab', t: 0, dur: 24, midi: 60 },
+      { ch: 'pulse2', patch: 'stab', t: 48, dur: 24, midi: 60 },
+    ]
+    const q = quantizeForNotation(detached, 96)
+    expect(q[0]!.dur).toBe(24)
+    const measures = layOutMeasures(detached, ticksPerBar([4, 4]), 96)
+    expect(measures.flat().filter((s) => s.note === null).length).toBeGreaterThan(0)
+  })
+
+  it('marks staccato when a filled slot is still much shorter than written', () => {
+    const short: Note[] = [
+      { ch: 'pulse1', patch: 'lead', t: 0, dur: 31, midi: 60 }, // 31/48 = 0.65
+      { ch: 'pulse1', patch: 'lead', t: 48, dur: 48, midi: 62 },
+    ]
+    const q = quantizeForNotation(short, 96)
+    expect(q[0]!.dur).toBe(48) // written as a quarter
+    expect(q[0]!.staccato).toBe(true) // but marked short
+    expect(q[1]!.staccato).toBe(false)
+  })
+
+  it('never writes a duration off the notation grid', () => {
+    const q = quantizeForNotation(bass, 8 * 24)
+    for (const x of q) expect(x.dur % NOTATION_GRID, `${x.dur} is off the 16th grid`).toBe(0)
+  })
+
+  it('a real theme produces only nameable note values', async () => {
+    const minted = await mintOnce('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
+    const score = compose(minted.theme)
+    const xml = encodeMusicXml(score, { tonicPc: 0, scale: [0, 2, 3, 5, 7, 8, 10] })
+    // nothing shorter than a 16th should appear in readable notation
+    expect(xml).not.toContain('<type>64th</type>')
+    expect(xml).not.toContain('<type>32nd</type>')
+    // and no double dots, which is what 7/16-of-a-quarter turned into
+    expect(xml).not.toContain('<dot/><dot/>')
   })
 })

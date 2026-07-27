@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { compose } from './compose'
 import { drumNote, encodeMidi, keySignatureFifths, PPQ } from './midi'
 import { mintChiptune } from './mint'
+
+// Minting composes and is the slowest thing in this file; do it once.
+const mintOnce = (() => {
+  const cache = new Map<string, Promise<Awaited<ReturnType<typeof mintChiptune>>>>()
+  return (did: string, bars: number) => {
+    const key = `${did}:${bars}`
+    let hit = cache.get(key)
+    if (!hit) {
+      hit = mintChiptune(did, bars)
+      cache.set(key, hit)
+    }
+    return hit
+  }
+})()
 import { monophonize, TPQ, type Score } from './score'
 
 // A real parser, not a byte-for-byte snapshot. A snapshot proves the output has
@@ -209,7 +223,7 @@ describe('MIDI export', () => {
   })
 
   it('exports a real minted theme', async () => {
-    const minted = await mintChiptune('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
+    const minted = await mintOnce('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
     const score = compose(minted.theme)
     const bytes = encodeMidi(score, { title: minted.theme.name, comment: minted.did })
     const parsed = parseSmf(bytes)

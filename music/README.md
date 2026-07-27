@@ -301,6 +301,20 @@ found by testing rather than reasoning:
 - Text events are **ASCII-folded**. SMF text is spec'd as ASCII and tools decode
   it as latin-1, so a UTF-8 em-dash arrives as `â€”` (confirmed with `mido`).
 
+**Written durations are not sounding durations.** The composer emits envelope
+lengths — a note in a 24-tick slot is written `dur: 22` so the synth re-triggers
+cleanly — and the bass runs 22-against-24 for its entire length. Exported
+literally that becomes 11/24 of a quarter followed by a 1/24 rest, which is not
+a note value: the first version of this produced a lead line with 90 sixty-fourth
+rests and a bass of 256 sixteenths each trailed by a 64th rest. A human
+transcriber notates the *rhythm* (the onset grid, which the composer always
+hits exactly) and marks articulation for shortness, so `quantizeForNotation`
+runs a note to the next onset when the shortfall is just the envelope (≥60% of
+the slot), leaves a real rest when the composer meant one, and adds a staccato
+dot when a filled slot is still well under its written length. The MIDI export
+is deliberately NOT quantized this way — there a synth is going to play it, so
+it keeps the real envelope lengths.
+
 **MusicXML** (`src/musicxml.ts`) is partwise 4.0: one part per pitched voice,
 `divisions` = TPQ, key signature written as the relative major's accidentals so
 modal tunes are readable, bass on an F clef. The format's two traps are handled

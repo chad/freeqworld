@@ -63,6 +63,48 @@ interface Slot {
   dur: number
   tieStart: boolean
   tieStop: boolean
+  /** the sounding length was much shorter than the written one */
+  staccato?: boolean
+}
+
+/** The grid the composer actually writes on: sixteenths. */
+export const NOTATION_GRID = TPQ / 4
+
+/**
+ * Turn sounding durations into WRITTEN durations.
+ *
+ * The composer emits envelope lengths, not note values: a note in a 24-tick
+ * slot is written `dur: 22` so the synth re-triggers cleanly, and the bass runs
+ * `dur: 22` against a 24-tick grid for its whole length. Exported literally
+ * that becomes 11/24 of a quarter followed by a 1/24 rest — which is not a note
+ * value, and made a page of 64th rests.
+ *
+ * A human transcriber notates the RHYTHM (the onset grid) and marks articulation
+ * for shortness. So: a note runs to the next onset, unless it is short enough
+ * that a rest was clearly intended, and it gets a staccato dot when the sounding
+ * length is well under what is written.
+ *
+ * This is deliberately a notation-only transform. The MIDI export stays faithful
+ * to the sounding durations, because there a synth is going to play it.
+ */
+export function quantizeForNotation(
+  notes: Note[], totalTicks: number, grid = NOTATION_GRID,
+): { note: Note; dur: number; staccato: boolean }[] {
+  const sorted = [...notes].sort((a, b) => a.t - b.t)
+  const ceilToGrid = (n: number) => Math.max(grid, Math.ceil(n / grid) * grid)
+  const out: { note: Note; dur: number; staccato: boolean }[] = []
+  for (let i = 0; i < sorted.length; i++) {
+    const n = sorted[i]!
+    const next = sorted[i + 1]
+    const gap = Math.max(grid, (next ? next.t : totalTicks) - n.t)
+    const sounding = Math.max(1, n.dur)
+    const ratio = sounding / gap
+    // >= 60% of the slot: the shortfall is the envelope, so fill the slot.
+    // Below that, the composer meant a rest, so write the note and leave one.
+    const written = ratio >= 0.6 ? gap : Math.min(gap, ceilToGrid(sounding))
+    out.push({ note: n, dur: written, staccato: ratio < 0.7 && written === gap })
+  }
+  return out
 }
 
 /**
@@ -71,16 +113,18 @@ interface Slot {
  */
 export function layOutMeasures(notes: Note[], barTicks: number, totalTicks: number): Slot[][] {
   const bars = Math.max(1, Math.ceil(totalTicks / barTicks))
-  const sorted = [...notes].sort((a, b) => a.t - b.t)
+  // written durations, not envelope durations — see quantizeForNotation
+  const written = quantizeForNotation(notes, totalTicks)
   const measures: Slot[][] = []
   for (let b = 0; b < bars; b++) {
     const barStart = b * barTicks
     const barEnd = barStart + barTicks
     const slots: Slot[] = []
     let cursor = barStart
-    for (const n of sorted) {
+    for (const w of written) {
+      const n = w.note
       const nStart = n.t
-      const nEnd = n.t + Math.max(1, n.dur)
+      const nEnd = n.t + w.dur
       if (nEnd <= barStart || nStart >= barEnd) continue
       const from = Math.max(nStart, barStart)
       const to = Math.min(nEnd, barEnd)
@@ -92,6 +136,8 @@ export function layOutMeasures(notes: Note[], barTicks: number, totalTicks: numb
         // a tie continues past this bar; a tie arrives from the previous one
         tieStart: nEnd > barEnd,
         tieStop: nStart < barStart,
+        // a dot belongs on the start of a tied group, not its continuation
+        staccato: w.staccato && nStart >= barStart,
       })
       cursor = to
     }
@@ -170,12 +216,10 @@ export function encodeMusicXml(score: Score, opts: MusicXmlOptions = {}): string
               const ties =
                 (s.tieStop ? '        <tie type="stop"/>\n' : '') +
                 (s.tieStart ? '        <tie type="start"/>\n' : '')
-              const notations =
-                s.tieStop || s.tieStart
-                  ? `        <notations>${s.tieStop ? '<tied type="stop"/>' : ''}${
-                      s.tieStart ? '<tied type="start"/>' : ''
-                    }</notations>\n`
-                  : ''
+              const tied =
+                (s.tieStop ? '<tied type="stop"/>' : '') + (s.tieStart ? '<tied type="start"/>' : '')
+              const artic = s.staccato ? '<articulations><staccato/></articulations>' : ''
+              const notations = tied || artic ? `        <notations>${tied}${artic}</notations>\n` : ''
               return (
                 `      <note>\n` +
                 `        <pitch><step>${p.step}</step>${alter}<octave>${p.octave}</octave></pitch>\n` +
