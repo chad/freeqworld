@@ -8,6 +8,7 @@ import { deriveAvatar } from '../../shared/src/avatar'
 import { renderPfp, traitSummary, type Variant } from './render'
 import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
 import { bytesToBase64, canonicalFace } from './canonical'
+import { checkable, describe, faceState, forget } from './verify'
 import {
   revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme, themeClock, onPlayStateChange,
   onSilentPlayback,
@@ -69,6 +70,8 @@ async function paint(): Promise<void> {
   rememberInUrl()
   // the same DID also derives a theme tune (silent until asked)
   void revealTheme(currentDid)
+  // ...and we can tell them where they stand without them having to ask
+  void paintFaceState(currentDid)
   $('label').textContent = currentLabel
   $('traits').innerHTML = traitSummary(avatar)
     .map(([k, v]) => `<span class="trait"><b>${k}</b> ${v}</span>`)
@@ -192,6 +195,24 @@ async function surpriseMe(): Promise<void> {
   await paint()
 }
 
+
+/** Say whether this identity already wears its derived face. Runs after the
+ *  reveal, never blocks it, and stays quiet for a guest did:key (which has no
+ *  Bluesky profile to check). */
+async function paintFaceState(did: string, refresh = false): Promise<void> {
+  const el = $('facestate')
+  if (!checkable(did)) {
+    el.classList.add('hidden')
+    return
+  }
+  const state = await faceState(did, refresh)
+  if (!state || currentDid !== did) return
+  const { text, verified } = describe(state)
+  el.textContent = text
+  el.style.color = verified ? 'var(--green)' : 'var(--dim)'
+  el.classList.remove('hidden')
+}
+
 async function download(): Promise<void> {
   if (!currentDid) return
   // the same canonical bytes we would upload, so what you download is the exact
@@ -268,6 +289,11 @@ function bind(): void {
 }
 
 function showDone(handle: string, posted: boolean): void {
+  // the avatar just changed: re-read the record rather than trusting our memory
+  if (currentDid) {
+    forget(currentDid)
+    window.setTimeout(() => void paintFaceState(currentDid!, true), 1500)
+  }
   $('connect').classList.add('hidden')
   const prof = $<HTMLAnchorElement>('done-profile')
   prof.href = `https://bsky.app/profile/${handle}`
