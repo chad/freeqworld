@@ -10,6 +10,8 @@ import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
 import { helpHtml } from './help'
+import { dismiss, dismissed, progress, render as renderSteps, steps } from './firststeps'
+import { faceState } from './facecheck'
 import { decodeInvite } from '../../shared/src/invite'
 import { LADDERS } from '../../shared/src/xp'
 import { FreeqBackend } from './freeqBackend'
@@ -111,6 +113,9 @@ export class App {
   /** what the HUD is saying about the music, and for how long */
   private nowPlayingTimer = 0
   private roomCueName = ''
+  /** the visitor has heard their own theme this session */
+  private heardOwnTheme = false
+  private stepsTimer = 0
   private cueLog: { kind: string; name: string; did?: string; reason?: string; at: number }[] = []
   private log: DurableEvent[] = []
   private lastMessageId: string | null = null
@@ -707,6 +712,7 @@ export class App {
   /** Say what is playing, and whose it is: a ♪ over their head in the world and
    *  a line in the HUD, both in that identity's accent colour. */
   private showNowPlaying(cue: Cue): void {
+    if (cue.kind === 'own' && this.identity && cue.did === this.identity.did) this.heardOwnTheme = true
     this.cueLog.push({ kind: cue.kind, name: cue.name, did: cue.did, reason: cue.reason, at: Math.round(performance.now()) })
     if (this.cueLog.length > 24) this.cueLog.shift()
     const chip = document.getElementById('nowplaying')
@@ -768,6 +774,7 @@ export class App {
     // the engine needs the room's population: it stops quoting arrivals in a
     // crowd, and when you're the only one here your own motif carries the room
     this.audio.setPopulation(this.members.size)
+    this.startFirstSteps()
     // we are standing in this channel: its live roster is ground truth, better
     // than a stale (or hidden) LIST count — keep the directory honest
     const entry = this.town?.directory?.find((e) => e.channel === this.channel)
@@ -999,6 +1006,10 @@ export class App {
     }
     this.paintMusicModes()
     // separate levels for music, identity motifs and effects (spec §26)
+    el('firststeps-hide').addEventListener('click', () => {
+      dismiss()
+      el('firststeps').classList.add('hidden')
+    })
     el('help-btn').addEventListener('click', () => void this.showHelp())
     el('help-close').addEventListener('click', () => el('helpcard').classList.add('hidden'))
     el('sound-more').addEventListener('click', (e) => {
@@ -1314,6 +1325,57 @@ export class App {
     } catch {
       /* offline: the DID stands */
     }
+  }
+
+
+  /**
+   * First steps. Read back from the signed ledger and from their own repo —
+   * never from "did the user click the thing". Refreshes while it is open and
+   * retires itself for good once every item is genuinely true.
+   */
+  private async paintFirstSteps(): Promise<void> {
+    const panel = el('firststeps')
+    // never while the landing is up: it sits over the overlay and swallows the
+    // click on "enter world", which is the single worst place to put anything
+    const landingUp = !el('landing').classList.contains('hidden')
+    if (dismissed() || landingUp) {
+      panel.classList.add('hidden')
+      return
+    }
+    const did = this.identity?.did ?? null
+    const real = Boolean(did && (did.startsWith('did:plc:') || did.startsWith('did:web:')))
+    const [standing, face] = await Promise.all([
+      did ? standingFor(did) : Promise.resolve(null),
+      real && did ? faceState(did) : Promise.resolve(null),
+    ])
+    const list = steps({
+      did,
+      real,
+      standing: standing && standing.runs > 0 ? standing : null,
+      wearingFace: Boolean(face?.wearing),
+      heardTheme: this.heardOwnTheme,
+    })
+    const { complete } = progress(list)
+    if (complete) {
+      // done for good: never nag someone who has finished
+      dismiss()
+      panel.classList.add('hidden')
+      this.toast('◈ first steps complete — every one of them verifiable')
+      return
+    }
+    el('firststeps-body').innerHTML = renderSteps(list)
+    panel.classList.remove('hidden')
+  }
+
+  private startFirstSteps(): void {
+    if (dismissed()) return
+    // paint on EVERY call: the first one usually happens while the landing is
+    // still up (and correctly renders nothing), so waiting for the interval
+    // meant the panel took 20s to appear after entering
+    void this.paintFirstSteps()
+    if (this.stepsTimer) return
+    // cheap: two reads, both cached, and only while the panel is up
+    this.stepsTimer = window.setInterval(() => void this.paintFirstSteps(), 20_000)
   }
 
   private async showHelp(): Promise<void> {
