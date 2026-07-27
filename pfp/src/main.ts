@@ -10,7 +10,8 @@ import { login, uploadBlob, setAvatar, postAboutIt } from './atproto'
 import { bytesToBase64, canonicalFace } from './canonical'
 import { checkable, describe, faceState, forget } from './verify'
 import {
-  revealTheme, toggleTheme, playStinger, downloadTheme, stopTheme, themeClock, onPlayStateChange,
+  revealTheme, toggleTheme, playStinger, downloadScore,
+  downloadTheme, stopTheme, themeClock, onPlayStateChange,
   onSilentPlayback,
 } from './theme'
 import { Stage } from './stage'
@@ -257,6 +258,14 @@ function bind(): void {
   $('theme-dl').addEventListener('click', (e) => {
     e.preventDefault()
     downloadTheme(currentLabel)
+  })
+  $('theme-midi').addEventListener('click', (e) => {
+    e.preventDefault()
+    downloadScore(currentLabel, 'midi')
+  })
+  $('theme-xml').addEventListener('click', (e) => {
+    e.preventDefault()
+    downloadScore(currentLabel, 'musicxml')
   })
   // three views: the live animated character (default), and the two stills
   // that get exported / uploaded

@@ -9,7 +9,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, stingerWav, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, stingerWav, themeScore, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
 import {
   completionsFromEvents, levelFor, QUEST_EVENT, QUEST_KINDS, standings, verifyQuestEvent,
@@ -63,13 +63,16 @@ const PFP_DIST_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../
  *  response that answers 200 with the whole file instead of 206. */
 function sendMedia(
   req: IncomingMessage, res: ServerResponse, body: Buffer, type: string, filename?: string,
+  disposition: 'inline' | 'attachment' = 'inline',
 ): void {
   const headers: Record<string, string> = {
     'content-type': type,
     'accept-ranges': 'bytes',
     'cache-control': 'public, max-age=86400',
   }
-  if (filename) headers['content-disposition'] = `inline; filename="${filename}"`
+  // A card or a WAV wants to render in the page; a score is a file you take
+  // away, and a browser shown MusicXML inline just displays a wall of tags.
+  if (filename) headers['content-disposition'] = `${disposition}; filename="${filename}"`
 
   const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ''))
   if (range) {
@@ -442,6 +445,17 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
         const mp4 = await clipMp4(id)
         sendMedia(req, res, mp4, 'video/mp4')
         return
+      }
+      // the same theme, as a score you can open in other software
+      if (kind === 'theme') {
+        const ext = /\.(mid|midi|musicxml|mxl)$/i.exec(rawWho)?.[1]?.toLowerCase()
+        if (ext) {
+          const { body, type, filename } = await themeScore(
+            id, ext === 'mid' || ext === 'midi' ? 'midi' : 'musicxml',
+          )
+          sendMedia(req, res, body, type, filename, 'attachment')
+          return
+        }
       }
       const wav = kind === 'stinger' ? await stingerWav(id) : await themeWav(id)
       sendMedia(req, res, Buffer.from(wav), 'audio/wav', `freeqworld-${(id.handle || id.did).replace(/[^a-z0-9.]/gi, '_')}.wav`)

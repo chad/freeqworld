@@ -19,6 +19,9 @@ import { compose } from '../../music/src/compose.ts'
 import { mintChiptune } from '../../music/src/mint.ts'
 import { renderScore } from '../../music/src/synth.ts'
 import { encodeWav } from '../../music/src/wav.ts'
+import { encodeMidi } from '../../music/src/midi.ts'
+import { encodeMusicXml } from '../../music/src/musicxml.ts'
+import { noteToMidi, SCALES } from '../../music/src/theory.ts'
 import { deriveStinger } from '../../music/src/motif.ts'
 import { CLIP_H, CLIP_W, clipFor, ffmpeg } from './clip.ts'
 import { completionsFromEvents, creditedXp, levelFor } from '../../shared/src/xp'
@@ -41,7 +44,7 @@ const TTL = 60 * 60 * 1000 // handles can move; an hour is plenty for a crawler
 
 /** "@alice.bsky.social", "alice.bsky.social" or a raw DID -> identity. */
 export async function resolveIdentity(input: string): Promise<Identity> {
-  const raw = decodeURIComponent(input).trim().replace(/^@/, '').replace(/\.(png|wav|json|mp4)$/i, '')
+  const raw = decodeURIComponent(input).trim().replace(/^@/, '').replace(/\.(png|wav|json|mp4|mid|midi|musicxml|mxl)$/i, '')
   const hit = idCache.get(raw)
   if (hit && Date.now() - hit.at < TTL) return hit.value
 
@@ -116,6 +119,37 @@ export async function themeWav(id: Identity, bars = 8): Promise<Uint8Array> {
   wavCache.set(key, { wav, at: Date.now() })
   if (wavCache.size > 200) wavCache.delete(wavCache.keys().next().value!)
   return wav
+}
+
+/** The theme as a portable score. A tune derived from a DID stops being
+ *  something only this engine can play and becomes a file you can open in a DAW
+ *  (MIDI) or engrave as sheet music (MusicXML). */
+export async function themeScore(
+  id: Identity, format: 'midi' | 'musicxml', bars = 16,
+): Promise<{ body: Buffer; type: string; filename: string }> {
+  const minted = await mintChiptune(id.did, bars)
+  const score = compose(minted.theme)
+  const tonicPc = noteToMidi(minted.theme.key) % 12
+  const scale = SCALES[minted.theme.scale]
+  const who = (id.handle || id.did).replace(/[^a-z0-9.]/gi, '_')
+  const comment = `derived from ${id.did} — freeq chiptune-v1`
+  if (format === 'midi') {
+    return {
+      body: Buffer.from(encodeMidi(score, { title: minted.theme.name, comment, tonicPc, scale })),
+      type: 'audio/midi',
+      filename: `freeqworld-${who}.mid`,
+    }
+  }
+  return {
+    body: Buffer.from(
+      encodeMusicXml(score, {
+        title: minted.theme.name, composer: id.handle || id.did, comment, tonicPc, scale,
+      }),
+      'utf8',
+    ),
+    type: 'application/vnd.recordare.musicxml+xml',
+    filename: `freeqworld-${who}.musicxml`,
+  }
 }
 
 export async function clipMp4(id: Identity): Promise<Buffer> {

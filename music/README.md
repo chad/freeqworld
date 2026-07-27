@@ -268,3 +268,52 @@ music derived from its cue name rather than silence.
 - Publish minted themes as a `freeq.at/profile/chiptune/v1` record and quote a
   joining user's motif inside the room cue (§11.3, §11.5).
 - User music packs: a Theme is just JSON.
+
+## Portable scores: MIDI and MusicXML
+
+A theme derived from a DID shouldn't be playable only by this engine. Two
+exports, both pure functions of the same `Score`:
+
+```sh
+node bin/chiptune.ts score plaza --format midi -o out/plaza.mid
+node bin/chiptune.ts score plaza --format musicxml -o out/plaza.musicxml
+node bin/chiptune.ts score did:plc:… --bars 16          # a minted identity
+```
+
+Over HTTP (and as in-tab downloads from the ID app, computed client-side like
+everything else):
+
+```
+GET /theme/<handle>.mid
+GET /theme/<handle>.musicxml
+```
+
+**MIDI** (`src/midi.ts`) is a format-1 Standard MIDI File at 480 PPQ — exactly
+10× the score's TPQ of 48, so every event lands on an integer tick. One track
+per voice, tempo/meter/key meta on track 0, percussion on GM channel 10.
+Timbre is necessarily an approximation (a 12.5%-duty NES pulse is not a GM
+program); the mapping is stated in `PATCH_PROGRAM`. Two subtleties that were
+found by testing rather than reasoning:
+
+- Scores are **monophonised first**, because the channels model hardware where a
+  later note cuts an earlier one. Writing the overlaps would make the export
+  sound *fuller* than the piece is.
+- Text events are **ASCII-folded**. SMF text is spec'd as ASCII and tools decode
+  it as latin-1, so a UTF-8 em-dash arrives as `â€”` (confirmed with `mido`).
+
+**MusicXML** (`src/musicxml.ts`) is partwise 4.0: one part per pitched voice,
+`divisions` = TPQ, key signature written as the relative major's accidentals so
+modal tunes are readable, bass on an F clef. The format's two traps are handled
+explicitly — every measure is filled to exactly one bar with rests, and a note
+crossing a bar line is split into tied notes.
+
+### Verification
+
+The tests parse the output rather than snapshot it (a snapshot only proves
+nothing changed). Beyond that, both exports were checked against independent
+implementations: **`mido`** parses the MIDI (correct type, PPQ, tempo, meter,
+key, no hanging notes) and **`music21`** parses the MusicXML and reports *no
+badly-filled measures*. Cross-checked as well: every sounding note in the
+MusicXML appears at the same onset and pitch in the MIDI, with the same pitch
+range — the files describe the same music, and the only difference is the MIDI
+expanding arpeggios into the notes they imply.

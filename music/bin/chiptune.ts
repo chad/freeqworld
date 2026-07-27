@@ -15,6 +15,9 @@ import { encodeWav } from '../src/wav.ts'
 import { THEMES, getTheme } from '../src/themes.ts'
 import { mintChiptune, mintStinger } from '../src/mint.ts'
 import { ticksToSeconds, type Score } from '../src/score.ts'
+import { encodeMidi } from '../src/midi.ts'
+import { encodeMusicXml } from '../src/musicxml.ts'
+import { noteToMidi, SCALES } from '../src/theory.ts'
 import type { Theme } from '../src/compose.ts'
 
 const argv = process.argv.slice(2)
@@ -89,6 +92,41 @@ switch (cmd) {
     break
   }
 
+  // The score as a portable file: MIDI for a DAW, MusicXML for notation.
+  case 'score': {
+    const did = positional[0]
+    if (!did) throw new Error('usage: score <did|theme-id> [--format midi|musicxml] [-o file]')
+    const format = (flag('--format') ?? 'midi') === 'musicxml' ? 'musicxml' : 'midi'
+    const bars = Number(flag('--bars') ?? 16)
+    let theme: Theme
+    let title: string
+    let comment: string
+    if (did.startsWith('did:')) {
+      const minted = await mintChiptune(did, bars)
+      theme = minted.theme
+      title = minted.theme.name
+      comment = `derived from ${did} — freeq chiptune-v1`
+    } else {
+      theme = getTheme(did)
+      title = theme.name
+      comment = `freeq room theme ${did} — chiptune-v1`
+    }
+    const score = compose(theme)
+    const tonicPc = noteToMidi(theme.key) % 12
+    const scale = SCALES[theme.scale]
+    const ext = format === 'midi' ? 'mid' : 'musicxml'
+    const out = flag('-o') ?? join(outDir, `${did.startsWith('did:') ? 'mint' : did}.${ext}`)
+    const body =
+      format === 'midi'
+        ? Buffer.from(encodeMidi(score, { title, comment, tonicPc, scale }))
+        : Buffer.from(encodeMusicXml(score, { title, comment, tonicPc, scale }), 'utf8')
+    mkdirSync(dirname(out), { recursive: true })
+    writeFileSync(out, body)
+    console.log(`  ${out}  ${(body.length / 1024).toFixed(1)}kB  (${format})`)
+    console.log(`  ${theme.name} — ${theme.key} ${theme.scale}, ${theme.bpm} BPM, ${score.notes.length} notes`)
+    break
+  }
+
   case 'stinger': {
     const did = positional[0]
     if (!did) throw new Error('usage: stinger <did>')
@@ -104,5 +142,6 @@ switch (cmd) {
   node bin/chiptune.ts all [--out-dir out]
   node bin/chiptune.ts mint <did> [--bars 32] [--play]
   node bin/chiptune.ts stinger <did>
+  node bin/chiptune.ts score <did|theme> [--format midi|musicxml] [--bars 16] [-o file]
 `)
 }

@@ -11,6 +11,9 @@ import { mintChiptune, mintStinger, type Minted } from '../../music/src/mint.ts'
 import { renderScore } from '../../music/src/synth.ts'
 import { ChiptunePlayer } from '../../music/src/web.ts'
 import { encodeWav } from '../../music/src/wav.ts'
+import { encodeMidi } from '../../music/src/midi.ts'
+import { encodeMusicXml } from '../../music/src/musicxml.ts'
+import { noteToMidi, SCALES } from '../../music/src/theory.ts'
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T
 
@@ -136,6 +139,38 @@ export async function playStinger(): Promise<void> {
   player ??= new ChiptunePlayer()
   player.unlock() // sync, still inside the click
   player.oneShotScore(await mintStinger(mintedDid))
+}
+
+/** Filename stem: a handle makes a good one, "a fresh did:key identity" doesn't. */
+function stemFor(label: string): string {
+  const handle = label.replace(/^@/, '').trim()
+  return /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(handle) ? handle : (minted?.seedHex.slice(0, 8) ?? 'theme')
+}
+
+/**
+ * The theme as a portable score, computed in this tab like everything else —
+ * MIDI to open in a DAW or tracker, MusicXML to engrave as sheet music in
+ * MuseScore/Sibelius/Dorico. Same derivation, a different way to carry it.
+ */
+export function downloadScore(label: string, format: 'midi' | 'musicxml'): void {
+  if (!minted) return
+  const score = compose(minted.theme)
+  const tonicPc = noteToMidi(minted.theme.key) % 12
+  const scale = SCALES[minted.theme.scale]
+  const title = minted.theme.name
+  const comment = `derived from ${minted.did} — freeq chiptune-v1`
+  const body =
+    format === 'midi'
+      ? new Blob([encodeMidi(score, { title, comment, tonicPc, scale }).buffer as ArrayBuffer], { type: 'audio/midi' })
+      : new Blob([encodeMusicXml(score, { title, composer: label.replace(/^@/, ''), comment, tonicPc, scale })], {
+          type: 'application/vnd.recordare.musicxml+xml',
+        })
+  const url = URL.createObjectURL(body)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `freeqworld-theme-${stemFor(label)}.${format === 'midi' ? 'mid' : 'musicxml'}`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 export function downloadTheme(label: string): void {
