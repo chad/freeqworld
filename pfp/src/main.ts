@@ -272,6 +272,14 @@ function bind(): void {
     e.stopPropagation()
     void toggleTheme()
   })
+  $('enterworld').addEventListener('click', () => {
+    // carry the handle across so the world can skip straight to sign-in
+    const handle = currentLabel.startsWith('@') ? currentLabel.slice(1) : ''
+    const url = handle
+      ? `https://world.freeq.at/?h=${encodeURIComponent(handle)}`
+      : 'https://world.freeq.at/'
+    window.open(url, '_blank', 'noopener')
+  })
   $('share').addEventListener('click', openShare)
   $('sharecopy').addEventListener('click', () => void copyShareLink())
   $('setbsky').addEventListener('click', openConnect)

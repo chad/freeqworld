@@ -39,7 +39,11 @@ async function ensureFreshBuild(): Promise<void> {
     const served = /assets\/(index-[A-Za-z0-9_-]+\.js)/.exec(html)?.[1]
     if (!served || running.includes(served)) return
     sessionStorage.setItem('fw-refreshed', '1')
-    location.replace(`${location.pathname}?r=${Date.now()}${location.hash}`)
+    // PRESERVE the query: an invite or handoff arriving on a stale build must
+    // survive the refresh, or the link silently loses what it carried
+    const params = new URLSearchParams(location.search)
+    params.set('r', String(Date.now()))
+    location.replace(`${location.pathname}?${params.toString()}${location.hash}`)
   } catch {
     /* offline or blocked — keep running what we have */
   }

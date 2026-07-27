@@ -164,6 +164,7 @@ export class App {
     this.updateSparkHud()
     window.addEventListener('resize', () => this.fitCanvas())
     this.bindUi()
+    this.captureArrival()
     // returning from the broker's OAuth redirect? consume the result first
     const oauthIdentity = consumeOAuthReturn()
     if (oauthIdentity) {
@@ -1241,6 +1242,78 @@ export class App {
     }
     conn.redeemInvite(this.channel, token)
     this.toast('◈ invite accepted — say something and your host gets the credit')
+  }
+
+
+  /**
+   * Read what the link brought us.
+   *
+   *   ?h=<handle>   handed over from the ID app so nobody types it twice
+   *   ?invite=<tok> a signed invitation; held until we have an authenticated
+   *                 DID, because the whole point is that the arrival is
+   *                 attributable
+   *
+   * This was missing entirely: `redeemPendingInvite` read a localStorage key
+   * that nothing ever wrote, so every invitation died on arrival. The live test
+   * that "proved" referrals worked drove the protocol directly and never opened
+   * the client — the user path was never exercised.
+   */
+  private captureArrival(): void {
+    const params = new URLSearchParams(location.search)
+
+    const handoff = params.get('h')
+    if (handoff) {
+      const input = document.getElementById('bsky-input') as HTMLInputElement | null
+      if (input) input.value = handoff.replace(/^@/, '')
+    }
+
+    const invite = params.get('invite')
+    if (invite) {
+      this.pendingInvite = invite
+      try {
+        localStorage.setItem('fimp-invite', invite)
+      } catch {
+        /* private mode: this session still has it in memory */
+      }
+      void this.greetInvited(invite)
+    }
+
+    if (handoff || invite) {
+      // keep the token out of the address bar (and out of anything they paste)
+      params.delete('h')
+      params.delete('invite')
+      const q = params.toString()
+      history.replaceState(null, '', `${location.pathname}${q ? `?${q}` : ''}`)
+    }
+  }
+
+  /** Arriving on an invitation should be a greeting, not a form. */
+  private async greetInvited(token: string): Promise<void> {
+    const parsed = decodeInvite(token)
+    if (!parsed) return
+    const host = parsed.payload.inviter
+    el('landing-invite').classList.remove('hidden')
+    // their character, drawn from the DID in the token itself
+    void spriteFor(host).then(({ frames }) => {
+      const canvas = document.getElementById('invite-host-av') as HTMLCanvasElement | null
+      const frame = frames.get('south:0')
+      if (!canvas || !frame) return
+      const ctx = canvas.getContext('2d')!
+      ctx.imageSmoothingEnabled = false
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.drawImage(frame, 0, 0, canvas.width, canvas.height)
+    })
+    // a name if we can get one; the DID is honest if we cannot
+    el('invite-host').textContent = shortDid(host)
+    try {
+      const r = await fetch(`https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(host)}`)
+      if (r.ok) {
+        const j = (await r.json()) as { handle?: string; displayName?: string }
+        if (j.handle) el('invite-host').textContent = j.displayName ? `${j.displayName} (@${j.handle})` : `@${j.handle}`
+      }
+    } catch {
+      /* offline: the DID stands */
+    }
   }
 
   private async showHelp(): Promise<void> {

@@ -36,13 +36,13 @@ action trivially achievable, (c) make the reward provable and shareable.
 
 ## Plan, in priority order
 
-- [ ] **1. Identity handoff (pfp → world).** A prominent "enter the world as
+- [x] **1. Identity handoff (pfp → world).** A prominent "enter the world as
       this character" CTA that carries `?h=<handle>`; the world pre-fills and
       skips straight to sign-in. Nobody types their handle twice.
-- [ ] **2. Landing that sells the right path.** Bluesky first, with what it
+- [x] **2. Landing that sells the right path.** Bluesky first, with what it
       unlocks stated plainly (verifiable runs, referrals, a face that proves
       itself). Guest kept, honestly labelled as look-around.
-- [ ] **3. Invite arrival as a moment.** Name the host, show both characters,
+- [x] **3. Invite arrival as a moment.** Name the host, show both characters,
       one obvious first action, and tell them what their host gets.
 - [ ] **4. First steps checklist.** Five real, verifiable items with live
       progress, shown once in-world, gone when complete. Every item is a thing
@@ -65,4 +65,19 @@ action trivially achievable, (c) make the reward provable and shareable.
 
 ## Log
 
-(appended as I go)
+**1–3 done.** Handoff (`?h=`), landing rewritten (Bluesky primary, guest behind a
+disclosure that says plainly what it cannot do), invite arrival greets you by
+name with the host's character drawn from the DID inside the token.
+
+**Bug found doing it — the referral flow was dead on the client side.** The
+`?invite=` capture had never landed: an earlier edit anchored on text that only
+exists in the ID app, so the replace silently did nothing, and
+`redeemPendingInvite` read a localStorage key that nothing ever wrote. My live
+"referrals work" test drove the protocol directly (raw TAGMSG) and never opened
+the client, so it proved the agent half and missed the user half entirely.
+Lesson recorded: **test the user path, not the protocol path.**
+
+Also fixed: the stale-build self-heal in client/src/main.ts reloaded to
+`?r=<ts>` and DROPPED the query string, so an invite arriving on a cached build
+lost its token. It now preserves the search params.
+

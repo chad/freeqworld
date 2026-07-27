@@ -212,21 +212,47 @@
           <div class="card">
             <h1>FREEQWORLD</h1>
             <div class="sub">a federated chat protocol rendered as a 1992 multiplayer RPG</div>
-            <div class="rowline">
-              <input id="name-input" data-testid="name-input" placeholder="pick a name…" maxlength="24" />
-              <button id="enter-guest" data-testid="enter-guest" class="primary">Enter world</button>
+
+            <!-- someone arriving on an invite is greeted by name, not by a form -->
+            <div id="landing-invite" class="hidden" style="border:1px solid var(--amber); border-radius:8px; padding:10px 12px; margin-bottom:12px; display:flex; gap:12px; align-items:center; text-align:left">
+              <canvas id="invite-host-av" width="64" height="96" style="image-rendering:pixelated; width:48px; height:72px"></canvas>
+              <div>
+                <div style="color:var(--amber)"><b id="invite-host">someone</b> invited you in.</div>
+                <div class="hint" style="margin:2px 0 0">Sign in with your Bluesky handle and say hello — the run only completes for a real identity, and then your host is credited for bringing you.</div>
+              </div>
             </div>
+
+            <!-- Bluesky first, because it is the path that actually works: a
+                 guest did:key cannot be verified, cannot be referred, and cannot
+                 wear a face that proves itself. Saying so beats burying it. -->
             <div class="rowline">
               <input id="bsky-input" data-testid="bsky-input" placeholder="your.handle.bsky.social" />
-              <button id="enter-bsky" data-testid="enter-bsky">Sign in with Bluesky</button>
+              <button id="enter-bsky" data-testid="enter-bsky" class="primary">Sign in with Bluesky</button>
             </div>
+            <div class="hint" style="margin:4px 0 12px">
+              Your character and your theme tune are computed from your identity — nothing is uploaded.
+              Signing in is what makes your work <b>provable</b>: witnessed runs, a face whose bytes
+              hash to your DID, and invitations that carry your name.
+            </div>
+
+            <details style="margin-bottom:10px">
+              <summary style="cursor:pointer; color:var(--dim); font-size:.85rem">or look around as a guest ›</summary>
+              <div class="rowline" style="margin-top:8px">
+                <input id="name-input" data-testid="name-input" placeholder="pick a name…" maxlength="24" />
+                <button id="enter-guest" data-testid="enter-guest">Enter world</button>
+              </div>
+              <div class="hint" style="margin-top:4px">
+                A guest gets a browser-only key. You can walk, talk and take courier runs — but nothing
+                you do can be tied to an identity that outlives this browser, so referrals, the face
+                check and posting your standing all need a real handle.
+              </div>
+            </details>
+
             <div class="hint">
               This is a real freeq client. When you enter, the town is generated from the server's
-              <b>live channel list</b> — every room is a real channel with real people in it. Your
-              character is derived from your DID, not stored on any server: same identity, same
-              face, everywhere.<br /><br />
+              <b>live channel list</b> — every room is a real channel with real people in it.<br /><br />
               Move <kbd>WASD</kbd> · jump <kbd>Space</kbd> · talk <kbd>Enter</kbd> · interact <kbd>E</kbd> ·
-              react <kbd>R</kbd> · map <kbd>M</kbd> · chat-mode <kbd>C</kbd>
+              react <kbd>R</kbd> · map <kbd>M</kbd> · help <kbd>?</kbd>
             </div>
           </div>
         </div>
