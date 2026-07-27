@@ -105,6 +105,23 @@ export function dismiss(): void {
   }
 }
 
+/**
+ * On a phone the full list is taller than the screen and covers the world, so
+ * show only what matters: how far along you are, and the next thing to do.
+ * (Measured: 914px of panel on a 664px viewport.)
+ */
+export function renderCompact(list: Step[]): string {
+  const { done, total } = progress(list)
+  const next = list.find((s) => !s.done)
+  if (!next) return ''
+  return `<div style="display:flex;justify-content:space-between;align-items:baseline">
+      <b style="color:var(--amber)">First steps</b>
+      <span style="color:var(--dim);font-size:.78rem">${done} of ${total}</span>
+    </div>
+    <div style="margin-top:4px">${next.label}</div>
+    <div style="color:var(--cyan);font-size:.78rem;line-height:1.4">${next.how ?? ''}</div>`
+}
+
 export function render(list: Step[]): string {
   const { done, total } = progress(list)
   const rows = list

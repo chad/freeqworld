@@ -10,7 +10,7 @@ import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
 import { helpHtml } from './help'
-import { dismiss, dismissed, progress, render as renderSteps, steps } from './firststeps'
+import { dismiss, dismissed, progress, render as renderSteps, renderCompact, steps } from './firststeps'
 import { faceState } from './facecheck'
 import { decodeInvite } from '../../shared/src/invite'
 import { LADDERS } from '../../shared/src/xp'
@@ -1363,7 +1363,8 @@ export class App {
       this.toast('◈ first steps complete — every one of them verifiable')
       return
     }
-    el('firststeps-body').innerHTML = renderSteps(list)
+    const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 820px)').matches
+    el('firststeps-body').innerHTML = narrow ? renderCompact(list) : renderSteps(list)
     panel.classList.remove('hidden')
   }
 
