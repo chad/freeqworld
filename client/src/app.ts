@@ -1367,12 +1367,39 @@ export class App {
     panel.classList.remove('hidden')
   }
 
+  /** The moment a first witnessed run lands is the moment to offer the card —
+   *  not on a timer, and not before they have anything to show. Once only. */
+  private async offerShareOnFirstRun(): Promise<void> {
+    if (!this.identity || localStorage.getItem('fimp-share-offered') === '1') return
+    const standing = await standingFor(this.identity.did)
+    if (!standing || standing.runs < 1) return
+    localStorage.setItem('fimp-share-offered', '1')
+    const handle = this.identity.handle?.replace(/^@/, '')
+    const url = handle && handle.includes('.')
+      ? `https://pfp.freeq.at/u/${encodeURIComponent(handle)}`
+      : `https://pfp.freeq.at/?u=${encodeURIComponent(this.identity.did)}`
+    const lv = levelFor(standing.xp)
+    this.toast(`◈ level ${lv.level} · ${lv.title} — your card is at ${url}`)
+    const panel = el('firststeps')
+    if (!panel.classList.contains('hidden')) {
+      const extra = document.createElement('div')
+      extra.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px solid var(--border)'
+      extra.innerHTML =
+        `<div style="color:var(--amber);font-size:.8rem">your first witnessed run is on the ledger</div>` +
+        `<div style="color:var(--dim);font-size:.76rem;line-height:1.4;margin:2px 0 6px">` +
+        `the card at that link carries your level, your melody and a clip — and anyone can recompute it.</div>` +
+        `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="font-size:.8rem">open my card →</a>`
+      el('firststeps-body').append(extra)
+    }
+  }
+
   private startFirstSteps(): void {
     if (dismissed()) return
     // paint on EVERY call: the first one usually happens while the landing is
     // still up (and correctly renders nothing), so waiting for the interval
     // meant the panel took 20s to appear after entering
     void this.paintFirstSteps()
+    void this.offerShareOnFirstRun()
     if (this.stepsTimer) return
     // cheap: two reads, both cached, and only while the panel is up
     this.stepsTimer = window.setInterval(() => void this.paintFirstSteps(), 20_000)
@@ -2455,6 +2482,7 @@ export class App {
       this.activeQuest = null
       void this.completeClaimedAct()
       invalidateXp() // our standing just changed
+      window.setTimeout(() => void this.offerShareOnFirstRun(), 4000)
     }
     // remember the run in hand so the quest board can show it
     const brief = /carry(?: this sealed phrase)? (?:to )?(#\S+)[^:]*:\s*(PKT-\w+)/i.exec(text) ?? /(PKT-\w+)[\s\S]*?(#\S+)/i.exec(text)
