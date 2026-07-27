@@ -272,6 +272,16 @@ function bind(): void {
     e.stopPropagation()
     void toggleTheme()
   })
+  // looking at someone else's? the point is that YOURS exists too
+  $('seemine').addEventListener('click', () => {
+    const input = $<HTMLInputElement>('handle')
+    input.value = ''
+    input.focus()
+    input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    input.style.borderColor = 'var(--amber)'
+    window.setTimeout(() => (input.style.borderColor = ''), 1800)
+    toast('type your Bluesky handle — your character is already derived, you just have not seen it')
+  })
   $('enterworld').addEventListener('click', () => {
     // carry the handle across so the world can skip straight to sign-in
     const handle = currentLabel.startsWith('@') ? currentLabel.slice(1) : ''
