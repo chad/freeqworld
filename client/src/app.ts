@@ -2798,6 +2798,9 @@ export class App {
       }),
       // where the thread campfires ended up, so placement can be inspected from
       // outside without waiting for a room that happens to have threads today
+      // the label rectangles placed on the last frame, so overlap can be
+      // measured instead of squinted at
+      tags: () => this.frameTags.map((r) => ({ ...r })),
       threads: () =>
         this.threadPlaces.map((t) => ({ root: t.root, count: t.count, x: +t.x.toFixed(2), y: +t.y.toFixed(2) })),
       teleport: (x: number, y: number) => {

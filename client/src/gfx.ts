@@ -333,13 +333,17 @@ export function drawTag(
   const maxY = (ctx.canvas?.height ?? 1e4) - h
   // clamp before searching, so a subject near the edge still gets a legible tag
   const y0 = Math.max(1, Math.min(maxY, Math.round(y)))
+  // one pixel of air, so two tags that merely touch still read as two tags
+  const pad = 1
   const free = (ty: number): boolean =>
-    !taken.some((r) => x < r.x + r.w && x + w > r.x && ty < r.y + r.h && ty + h > r.y)
+    !taken.some(
+      (r) => x < r.x + r.w + pad && x + w + pad > r.x && ty < r.y + r.h + pad && ty + h + pad > r.y,
+    )
   // Try above first, then below, widening each time. Nudging only upward meant
   // that against the top wall — exactly where the door labels are — there was
   // nowhere to go and tags stacked anyway.
   let ty = y0
-  for (const dy of [0, -h, h, -h * 2, h * 2, -h * 3, h * 3]) {
+  for (const dy of [0, -h - 1, h + 1, -(h + 1) * 2, (h + 1) * 2, -(h + 1) * 3, (h + 1) * 3]) {
     const cand = y0 + dy
     if (cand < 1 || cand > maxY) continue
     if (free(cand)) {
