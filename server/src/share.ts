@@ -293,3 +293,77 @@ export async function checkFace(id: Identity): Promise<FaceCheck> {
       'render the portrait from the DID, hash it, compare (shared/src/cid.ts)',
   }
 }
+
+// --- an invitation that unfurls ---------------------------------------------
+//
+// The link a host hands out is the thing that actually travels, so it should
+// arrive as "X invited you", with X's character on it — not as a generic site
+// card. The token is verified before we put anybody's name on it: it carries
+// the witness DID, and a did:key holds its own public key, so a forged token
+// cannot borrow someone's identity for an unfurl.
+
+import { checkInvite, decodeInvite } from '../../shared/src/invite'
+import { publicKeyFromDid } from '../../shared/src/signing'
+
+export interface InviteView {
+  host: Identity
+  token: string
+}
+
+/** Verify the signature (not the redeemer rules — nobody has redeemed yet). */
+export async function inviteView(token: string): Promise<InviteView | null> {
+  const parsed = decodeInvite(token)
+  if (!parsed) return null
+  try {
+    publicKeyFromDid(parsed.payload.witness)
+  } catch {
+    return null
+  }
+  // checkInvite with an empty redeemer still runs the signature + expiry checks
+  const res = checkInvite(token, '', {})
+  if (res.reason === 'malformed' || res.reason === 'bad-signature' || res.reason === 'expired') return null
+  try {
+    return { host: await resolveIdentity(parsed.payload.inviter), token }
+  } catch {
+    return null
+  }
+}
+
+export async function invitePage(view: InviteView, origin: string, worldOrigin: string): Promise<string> {
+  const who = view.host.label
+  const card = `${origin}/card/${encodeURIComponent(view.host.handle || view.host.did)}.png`
+  const enter = `${worldOrigin}/?invite=${encodeURIComponent(view.token)}`
+  const title = `${who} invited you into FreeqWorld`
+  const desc =
+    `A federated chat network rendered as a 1992 RPG. Your character and your theme tune are ` +
+    `computed from your identity — nothing is uploaded, and nothing is stored. ` +
+    `Arrive, say hello, and ${who} is credited for bringing you.`
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="FreeqWorld" />
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(desc)}" />
+<meta property="og:url" content="${esc(origin)}/i/${encodeURIComponent(view.token)}" />
+<meta property="og:image" content="${esc(card)}" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${esc(title)}" />
+<meta name="twitter:description" content="${esc(desc)}" />
+<meta name="theme-color" content="#0d0d14" />
+<script>location.replace(${JSON.stringify(enter)})</script>
+<style>
+ html,body{margin:0;height:100%;background:#0d0d14;color:#d8d6c8;font-family:ui-monospace,Menlo,monospace;
+   display:flex;align-items:center;justify-content:center;text-align:center}
+ a{color:#ffb454} img{max-width:min(680px,92vw);border-radius:12px;border:1px solid #2c2c40}
+ p{color:#8a8896;font-size:.9rem}
+</style>
+</head><body><div>
+  <img src="${esc(card)}" alt="${esc(who)}'s character" />
+  <p>${esc(title)} — <a href="${esc(enter)}">come in</a></p>
+</div></body></html>`
+}

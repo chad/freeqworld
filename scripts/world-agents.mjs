@@ -741,7 +741,7 @@ for (const [i, agent] of AGENTS.entries()) {
     const sig = nacl.sign.detached(new TextEncoder().encode(inviteCanonical(payload)), kp.secretKey)
     const token = encodeInvite(payload, sig)
     console.log(`[${agent.nick}] invite minted for ${nick} (${inviter.slice(0, 24)}…)`)
-    return `REFERRAL for ${nick}: give this to someone who has never been here — https://world.freeq.at/?invite=${token} — the run completes when they arrive with a real Bluesky identity and say something. it pays double, and i will name you as their host.`
+    return `REFERRAL for ${nick}: give this to someone who has never been here — https://pfp.freeq.at/i/${token} — the run completes when they arrive with a real Bluesky identity and say something. it pays double, and i will name you as their host.`
   }
 
   /** A newcomer redeemed an invite: hold it until they speak. */

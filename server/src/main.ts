@@ -9,7 +9,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, resolveIdentity, stingerWav, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, stingerWav, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
 import { QUEST_KINDS } from '../../shared/src/xp'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
@@ -280,6 +280,23 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   // crawlers don't run JS, so its OG tags can never vary per person).
   // Reachable under /id/... on world.freeq.at and at the root on pfp.freeq.at.
   const share = path.startsWith('/id/') ? path.slice('/id'.length) : path
+  // An invitation, unfurling as the person who sent it.
+  if (share.startsWith('/i/')) {
+    const token = decodeURIComponent(share.slice('/i/'.length))
+    const view = await inviteView(token)
+    if (!view) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end("that invitation isn't one I signed, or it has expired — ask your host for a fresh one.")
+      return
+    }
+    const local = /^(localhost|127\.|\[?::1)/.test(String(req.headers.host ?? ''))
+    const origin = local ? `http://${req.headers.host}` : (process.env.SHARE_ORIGIN ?? 'https://pfp.freeq.at')
+    const world = local ? `http://${req.headers.host}` : 'https://world.freeq.at'
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
+    res.end(await invitePage(view, origin, world))
+    return
+  }
+
   const shareMatch = /^\/(u|card|theme|stinger|clip|face)\/(.+)$/.exec(share)
   // The app's own address bar is `?u=<handle>` (that's the URL a visitor copies
   // after following a share, or after looking someone up). Crawlers asking for
