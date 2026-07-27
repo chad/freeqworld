@@ -280,15 +280,39 @@ export function generateTilemap(room: RoomManifest): Tilemap {
     }
   }
 
-  // sparse deterministic decor / glow accents by template
+  // Sparse deterministic decor / glow accents by template.
+  //
+  // These used to be dropped on any floor tile at all, which strewed furniture
+  // through the middle of the room where people stand and talk. Real rooms put
+  // their clutter against the walls and keep the floor clear, so a candidate
+  // next to a wall is preferred and a spot in open floor is a last resort.
+  //
+  // In a club or a vault every one of these used to be emissive — about twenty
+  // point lights at full strength per room, which is why #music looked like
+  // confetti. Only every third accent lights up now.
   const rng = seededPrng(stringSeed(room.channel + room.template))
   const decorCount = Math.floor((w * h) / 40)
+  const emissive = room.template === 'vault' || room.template === 'club'
+  const neighbours = (x: number, y: number) => [get(x - 1, y), get(x + 1, y), get(x, y - 1), get(x, y + 1)]
+  const touchesWall = (x: number, y: number): boolean => neighbours(x, y).includes(TILE.WALL)
+  // furniture is solid: never park it where it would plug a doorway
+  const blocksDoor = (x: number, y: number): boolean =>
+    neighbours(x, y).includes(TILE.DOOR) || get(x, y - 2) === TILE.DOOR || get(x, y + 2) === TILE.DOOR
   for (let i = 0; i < decorCount; i++) {
-    const x = 2 + Math.floor(rng() * (w - 4))
-    const y = 2 + Math.floor(rng() * (h - 4))
-    if (get(x, y) === TILE.FLOOR) {
-      set(x, y, room.template === 'vault' || room.template === 'club' ? TILE.GLOW : TILE.DECOR)
+    let px = -1
+    let py = -1
+    for (let tries = 0; tries < 24; tries++) {
+      // 1..w-2, not 2..w-3: the old range could never offer a tile beside the
+      // border wall, so every accent landed adrift in the middle of the floor
+      const x = 1 + Math.floor(rng() * (w - 2))
+      const y = 1 + Math.floor(rng() * (h - 2))
+      if (get(x, y) !== TILE.FLOOR || blocksDoor(x, y)) continue
+      px = x
+      py = y
+      if (touchesWall(x, y)) break // a spot against a wall: take it
     }
+    if (px < 0) continue
+    set(px, py, emissive && i % 3 === 0 ? TILE.GLOW : TILE.DECOR)
   }
 
   // spawn: center-ish, guaranteed walkable

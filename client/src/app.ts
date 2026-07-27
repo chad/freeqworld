@@ -2015,7 +2015,7 @@ export class App {
           ctx.fillRect(sx + 2, sy + 2, 4, 4)
           ctx.fillStyle = 'rgba(255,255,255,0.5)'
           ctx.fillRect(sx + 3, sy + 3, 2, 2)
-          this.frameLights.push({ x: sx + 4, y: sy + 4, r: 34, c: pal.glow, p: 0.95 })
+          this.frameLights.push({ x: sx + 4, y: sy + 4, r: 24, c: pal.glow, p: 0.6 })
         }
         if (t === TILE.DOOR) this.frameLights.push({ x: sx + 4, y: sy + 6, r: 26, c: pal.glow, p: 0.7 })
         if (t === TILE.DECOR) {

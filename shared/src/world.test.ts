@@ -77,3 +77,58 @@ describe('generateTilemap', () => {
     }
   })
 })
+
+describe('room accents keep the floor clear', () => {
+  // a real manifest: the generator needs width/height/exits, and a club is the
+  // template that turns accents into lights
+  const room = LAUNCH_ROOMS.find((r) => r.template === 'club')!
+
+  it('puts most clutter against the walls, not where people stand', () => {
+    const map = generateTilemap(room)
+    const at = (x: number, y: number) => map.tiles[y * map.width + x]
+    let against = 0
+    let adrift = 0
+    for (let y = 1; y < map.height - 1; y++) {
+      for (let x = 1; x < map.width - 1; x++) {
+        const t = at(x, y)
+        if (t !== TILE.DECOR && t !== TILE.GLOW) continue
+        const wall =
+          at(x - 1, y) === TILE.WALL || at(x + 1, y) === TILE.WALL || at(x, y - 1) === TILE.WALL || at(x, y + 1) === TILE.WALL
+        if (wall) against++
+        else adrift++
+      }
+    }
+    expect(against + adrift).toBeGreaterThan(4)
+    expect(against, `${adrift} accents adrift vs ${against} against a wall`).toBeGreaterThanOrEqual(adrift)
+  })
+
+  it('does not turn a club into twenty point lights', () => {
+    const map = generateTilemap(room)
+    const glow = [...map.tiles].filter((t) => t === TILE.GLOW).length
+    const decor = [...map.tiles].filter((t) => t === TILE.DECOR).length
+    expect(glow).toBeGreaterThan(0) // a club still glows
+    expect(glow).toBeLessThan(decor) // but most accents are unlit furniture
+  })
+
+  it('is still deterministic for a channel', () => {
+    expect(generateTilemap(room).tiles).toEqual(generateTilemap(room).tiles)
+  })
+})
+
+describe('furniture never plugs a doorway', () => {
+  it('leaves every door approachable in every launch room', () => {
+    for (const room of LAUNCH_ROOMS) {
+      const map = generateTilemap(room)
+      const at = (x: number, y: number) => map.tiles[y * map.width + x]
+      for (let y = 0; y < map.height; y++) {
+        for (let x = 0; x < map.width; x++) {
+          if (at(x, y) !== TILE.DOOR) continue
+          // the tile you step onto coming through must not be solid furniture
+          const inward = y === 0 ? [x, y + 1] : y === map.height - 1 ? [x, y - 1] : x === 0 ? [x + 1, y] : [x - 1, y]
+          const t = at(inward[0]!, inward[1]!)
+          expect(t, `${room.channel}: door at ${x},${y} opens onto tile ${t}`).not.toBe(TILE.DECOR)
+        }
+      }
+    }
+  })
+})
