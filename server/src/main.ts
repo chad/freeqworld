@@ -11,6 +11,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
 import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, resolveIdentity, stingerWav, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
+import { QUEST_KINDS } from '../../shared/src/xp'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
@@ -225,6 +226,18 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
       res.end(JSON.stringify({ error: (err as Error).message }))
       return
     }
+  }
+
+  // The quest catalogue, so the agents describe exactly the runs the rest of the
+  // world describes. shared/src/xp.ts is the single source; the agents run under
+  // bare node and cannot import TS, so they read it from here.
+  if (path === '/api/quests' || path === '/id/api/quests') {
+    return json({
+      quests: QUEST_KINDS.map((q) => ({
+        id: q.id, label: q.label, ask: q.ask, doThis: q.doThis,
+        xp: q.xp, alwaysDouble: Boolean(q.alwaysDouble), trust: q.trust,
+      })),
+    })
   }
 
   // --- the XP ledger --------------------------------------------------------

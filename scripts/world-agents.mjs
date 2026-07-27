@@ -113,6 +113,10 @@ const AGENTS = [
           return `asking github about ${held.repo} now, ${ctx.from}.`
         }
       }
+      // asking WHAT the work is must not hand you an envelope
+      if (/\b(list|what|which|available|options|menu|kinds|choices|can i do|help)\b/i.test(ctx.text)) {
+        return ctx.listQuests(ctx.from)
+      }
       if (/quest/i.test(ctx.text)) {
         // issueQuest returns the brief it sent — or a refusal, when there is no
         // room quiet enough to rekindle or nobody new to escort. Announcing an
@@ -131,6 +135,9 @@ const AGENTS = [
       // treating the message as a new request
       const surveyed = ctx.trySurvey(ctx.from, ctx.text)
       if (surveyed) return surveyed
+      if (/\b(list|what|which|available|options|menu|kinds|choices|can i do|help)\b/i.test(ctx.text)) {
+        return ctx.listQuests(ctx.from)
+      }
       if (/quest/i.test(ctx.text)) return ctx.issueQuest(ctx.from, true, questKind(ctx.text))
       return `i map channels into rooms. say "quest" for a courier run, "quest survey" to chart a room, "quest rekindle" to wake a quiet one, "quest escort" to make a newcomer welcome, "quest referral" for an invite that carries your name, "quest face" to prove you wear the character your DID derives, "quest post" to put your standing where people can see it, or "quest drop" if you want out of the one you're holding — real work, verified in the real channel.`
     },
@@ -596,6 +603,36 @@ for (const [i, agent] of AGENTS.entries()) {
   // HASH THEM OURSELVES (so the renderer cannot lie to us about the CID), read
   // their profile record straight from the AppView, and compare.
   const WORLD_HTTP = process.env.FREEQ_WORLD_HTTP ?? 'https://world.freeq.at'
+
+  // The catalogue, fetched rather than duplicated: shared/src/xp.ts is the one
+  // place a run is described, and an agent reciting a stale list would be the
+  // same drift that made a design doc claim rekindle needed silence.
+  let catalogue = []
+  const loadCatalogue = async () => {
+    try {
+      const r = await fetch(`${WORLD_HTTP}/api/quests`, { signal: AbortSignal.timeout(6000) })
+      if (!r.ok) return
+      const body = await r.json()
+      if (Array.isArray(body.quests) && body.quests.length) {
+        catalogue = body.quests
+        console.log(`[${agent.nick}] catalogue: ${catalogue.length} runs`)
+      }
+    } catch { /* keep whatever we had */ }
+  }
+
+  /** What can I do here? Grouped by how the work is verified, because that is
+   *  the interesting part and it teaches the rule while answering. */
+  const listQuests = (nick) => {
+    if (!catalogue.length) {
+      return `ask me for "quest" and i'll put you to work, ${nick} — courier, survey, rekindle, escort, referral, face, post or commit.`
+    }
+    const fmt = (q) => `${q.id} ${q.xp}${q.alwaysDouble ? 'x2' : ''}`
+    const by = (t) => catalogue.filter((q) => q.trust === t).map(fmt).join(' · ')
+    const held = quests.get(nick.toLowerCase())
+    const holding = held ? ` you're holding a ${held.kind ?? 'courier'} run — "quest drop" to tear it up.` : ''
+    return `the work i can witness, ${nick}: ${by('witnessed')} (i see it happen in the room) — ${by('self-signed')} (no third party at all) — ${by('oracle')} (i ask github, and say so). name one: "quest survey", "quest face". plain "quest" is a courier run.${holding}`
+  }
+
   const APPVIEW_HTTP = 'https://public.api.bsky.app/xrpc'
 
   const rawCidOf = (bytes) => {
@@ -780,6 +817,7 @@ for (const [i, agent] of AGENTS.entries()) {
     verifyPost: (n, who, held) => void verifyStandingPost(n, who, held),
     verifyCommit: (n, who, held) => void verifyCommitQuest(n, who, held),
     dropQuests,
+    listQuests,
     heldQuest: (n) => quests.get(String(n).toLowerCase()),
   })
 
@@ -990,7 +1028,11 @@ for (const [i, agent] of AGENTS.entries()) {
 
   // Re-post periodically: TAGMSGs are ephemeral and never enter CHATHISTORY,
   // so a client that just arrived has to hear the offers fresh.
-  client.on('ready', () => setTimeout(postOpenOffers, 3000))
+  client.on('ready', () => {
+    setTimeout(postOpenOffers, 3000)
+    void loadCatalogue()
+  })
+  setInterval(() => void loadCatalogue(), 3600_000)
   setInterval(postOpenOffers, 90_000)
 
   let seq = 0
