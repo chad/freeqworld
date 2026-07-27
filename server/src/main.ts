@@ -11,13 +11,47 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
 import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, stingerWav, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
-import { QUEST_KINDS } from '../../shared/src/xp'
+import {
+  completionsFromEvents, levelFor, QUEST_EVENT, QUEST_KINDS, standings, verifyQuestEvent,
+} from '../../shared/src/xp'
+import { FAMILIAR_EVENT } from '../../shared/src/familiar'
 import type { ClientFrame, DurableEvent } from '../../shared/src/protocol'
 
 const CLIENT_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../client/dist')
 const PFP_DIST = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist')
 const IRC_HTTP = process.env.FREEQ_HTTP ?? 'https://irc.freeq.at'
 /** brief cache so a room full of players doesn't hammer the events API */
+/** The shape freeq-server returns from /api/v1/channels/{name}/events. */
+interface RawEvent {
+  actor_did?: string
+  event_type?: string
+  payload?: unknown
+  signature?: string
+  timestamp?: number
+}
+
+/** The one hatch a player legitimately holds, or null. Verified exactly like a
+ *  completion: the witness names itself in the signed payload, and the signature
+ *  must check out against the key inside its own did:key. An unsigned or
+ *  mismatched hatch is not a familiar. */
+async function verifiedHatch(
+  events: RawEvent[], did: string,
+): Promise<{ name: string; ts: number; witness: string } | null> {
+  const found: { name: string; ts: number; witness: string }[] = []
+  for (const e of events) {
+    if (e.event_type !== FAMILIAR_EVENT) continue
+    const p = e.payload as Record<string, string> | undefined
+    if (!p?.player || p.player !== did || !p.name) continue
+    const witness = e.actor_did ?? p.witness ?? ''
+    if ((p.witness ?? witness) !== witness) continue
+    if (!(await verifyQuestEvent(p, e.signature, witness))) continue
+    found.push({ name: p.name, ts: Number(p.ts ?? e.timestamp ?? 0), witness })
+  }
+  // the earliest verified hatch wins, so a second one cannot rename a familiar
+  found.sort((a, b) => a.ts - b.ts)
+  return found[0] ?? null
+}
+
 const xpCache = new Map<string, { events: unknown[]; at: number }>()
 /** The same app built with base '/' — what the pfp.freeq.at vhost serves. */
 const PFP_DIST_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../pfp/dist-root')
@@ -252,16 +286,20 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
   if (path === '/api/xp' || path === '/id/api/xp') {
     const chans = (url.searchParams.get('channels') ?? '#general,#lobby,#dev')
       .split(',').map((c) => c.trim()).filter((c) => c.startsWith('#')).slice(0, 8)
-    const key = chans.join(',')
+    // Which signed event types to fetch. Defaults to completions alone so every
+    // existing caller is unaffected; the world also asks for familiar_hatched.
+    const types = (url.searchParams.get('types') ?? QUEST_EVENT)
+      .split(',').map((t) => t.trim()).filter((t) => /^[a-z_]{3,32}$/.test(t)).slice(0, 4)
+    const key = `${chans.join(',')}|${types.join(',')}`
     const hit = xpCache.get(key)
     if (hit && Date.now() - hit.at < 30_000) return json({ events: hit.events, cached: true })
     const events: unknown[] = []
-    await Promise.all(chans.map(async (ch) => {
+    await Promise.all(chans.flatMap((ch) => types.map(async (type) => {
       try {
         const r = await fetch(
           `${IRC_HTTP}/api/v1/channels/${encodeURIComponent(ch)}/events` +
             // the server names this param `type` (web.rs api_channel_events)
-            `?type=quest_complete&limit=500`,
+            `?type=${encodeURIComponent(type)}&limit=500`,
           { signal: AbortSignal.timeout(6000) },
         )
         if (!r.ok) return
@@ -270,9 +308,43 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
       } catch {
         /* one unreachable channel must not empty the whole board */
       }
-    }))
+    })))
     xpCache.set(key, { events, at: Date.now() })
     return json({ events })
+  }
+
+  // --- one player's standing, computed here ---------------------------------
+
+  // For the witnessing agents, which run under bare node and cannot import TS:
+  // rather than restate the ladder in .mjs (the drift that made a design doc
+  // claim rekindle needed no silence), they ask the one implementation.
+  if (path === '/api/standing' || path === '/id/api/standing') {
+    const did = url.searchParams.get('did')
+    if (!did) return json({ error: 'did required' }, 400)
+    const chans = (url.searchParams.get('channels') ?? '#general,#lobby,#dev')
+      .split(',').map((c) => c.trim()).filter((c) => c.startsWith('#')).slice(0, 8)
+    const events: RawEvent[] = []
+    await Promise.all(chans.flatMap((ch) => [QUEST_EVENT, FAMILIAR_EVENT].map(async (type) => {
+      try {
+        const r = await fetch(
+          `${IRC_HTTP}/api/v1/channels/${encodeURIComponent(ch)}/events?type=${type}&limit=500`,
+          { signal: AbortSignal.timeout(6000) },
+        )
+        if (!r.ok) return
+        const body = (await r.json()) as { events?: RawEvent[] }
+        for (const e of body.events ?? []) events.push(e)
+      } catch { /* a channel being down must not deny somebody their level */ }
+    })))
+    const completions = await completionsFromEvents(events)
+    const mine = standings(completions).find((s) => s.player === did)
+    const xp = mine?.xp ?? 0
+    const lv = levelFor(xp)
+    // an existing hatch, verified the same way a completion is
+    const hatched = await verifiedHatch(events, did)
+    return json({
+      did, xp, level: lv.level, title: lv.title, nextAt: lv.next?.at ?? null,
+      runs: mine?.runs ?? 0, familiar: hatched,
+    })
   }
 
   // --- shareable identity pages -------------------------------------------
