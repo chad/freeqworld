@@ -329,14 +329,25 @@ export function drawTag(
 ): void {
   const w = text.length * 4 + 4
   const h = 9
-  let x = Math.round(cx - w / 2)
-  let ty = Math.round(y)
-  // nudge upward until this tag isn't sitting on another one
-  for (let tries = 0; tries < 6; tries++) {
-    const clash = taken.some((r) => x < r.x + r.w && x + w > r.x && ty < r.y + r.h && ty + h > r.y)
-    if (!clash) break
-    ty -= h
+  const x = Math.round(cx - w / 2)
+  const maxY = (ctx.canvas?.height ?? 1e4) - h
+  // clamp before searching, so a subject near the edge still gets a legible tag
+  const y0 = Math.max(1, Math.min(maxY, Math.round(y)))
+  const free = (ty: number): boolean =>
+    !taken.some((r) => x < r.x + r.w && x + w > r.x && ty < r.y + r.h && ty + h > r.y)
+  // Try above first, then below, widening each time. Nudging only upward meant
+  // that against the top wall — exactly where the door labels are — there was
+  // nowhere to go and tags stacked anyway.
+  let ty = y0
+  for (const dy of [0, -h, h, -h * 2, h * 2, -h * 3, h * 3]) {
+    const cand = y0 + dy
+    if (cand < 1 || cand > maxY) continue
+    if (free(cand)) {
+      ty = cand
+      break
+    }
   }
+  ty = Math.max(1, Math.min(maxY, ty))
   taken.push({ x, y: ty, w, h })
   if (opts.plate !== false) {
     ctx.fillStyle = 'rgba(8,8,14,0.72)'
