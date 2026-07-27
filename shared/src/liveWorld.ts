@@ -207,7 +207,9 @@ export function worldFromChannels(entries: ChannelEntry[], opts: WorldOptions = 
       schema: 'freeq.at/world/object/v1',
       id: 'obelisk',
       type: 'monument',
-      position: [Math.max(2, Math.floor(width / 2) - 4), 4],
+      // NOT width/2 - 4: that is the directory kiosk's tile, and two objects on
+      // one tile means one is invisible and E picks whichever it finds first
+      position: [Math.max(2, Math.floor(width / 2) - 8), 4],
       sprite: 'obelisk',
       label: 'Obelisk of standing',
       capabilities: ['inspect', 'read'],

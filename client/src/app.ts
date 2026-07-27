@@ -10,6 +10,7 @@ import type { MusicState } from '../../shared/src/music'
 import { ChiptuneEngine, MUSIC_MODES, type Cue } from './audio'
 import { board, invalidate as invalidateXp, ladderBoard, levelFor, standingFor } from './xp'
 import { helpHtml } from './help'
+import { placeCampfire } from './campfire'
 import { dismiss, dismissed, progress, render as renderSteps, renderCompact, steps } from './firststeps'
 import { faceState } from './facecheck'
 import { decodeInvite } from '../../shared/src/invite'
@@ -35,6 +36,8 @@ import {
   drawWallTile,
   DustField,
   LightMap,
+  drawDoorTile,
+  drawTag,
 } from './gfx'
 
 const TILE_PX = 8
@@ -119,6 +122,8 @@ export class App {
   /** last rendered checklist markup, so a repaint that changes nothing doesn't
    *  replace the DOM under someone's finger */
   private stepsHtml = ''
+  /** label rectangles already placed this frame (see drawTag) */
+  private frameTags: { x: number; y: number; w: number; h: number }[] = []
   private cueLog: { kind: string; name: string; did?: string; reason?: string; at: number }[] = []
   private log: DurableEvent[] = []
   private lastMessageId: string | null = null
@@ -416,22 +421,31 @@ export class App {
       .filter((e): e is Extract<DurableEvent, { kind: 'message' }> => e.kind === 'message' && !e.event.enc)
       .map((e) => e.event)
     // campfires at deterministic walkable spots derived from the thread root
+    // Campfires used to be dropped on ANY walkable tile, so they landed on the
+    // quest board, in doorways, and on top of each other. The rules live in
+    // ./campfire so they can be tested; see placeCampfire.
+    const room0 = this.rooms.get(this.channel)
+    const blocked = [
+      ...(room0?.objects ?? []).map((o) => ({ x: o.position[0] + 0.5, y: o.position[1] + 0.5, r: 2.2 })),
+      ...(this.map?.doors ?? []).map((d) => ({ x: d.x + 0.5, y: d.y + 0.5, r: 2.5 })),
+      { x: this.map!.spawn[0] + 0.5, y: this.map!.spawn[1] + 0.5, r: 2.5 },
+    ]
+    const placed: { x: number; y: number }[] = []
     this.threadPlaces = threadsOf(msgs).map((t) => {
       const seed = new Uint8Array(16)
       for (let i = 0; i < t.root.length; i++) seed[i % 16] = (seed[i % 16]! * 37 + t.root.charCodeAt(i)) & 0xff
       const rng = seededPrng(seed)
-      let x = this.map!.spawn[0] + 0.5
-      let y = this.map!.spawn[1] - 2
-      for (let tries = 0; tries < 50; tries++) {
-        const cx = 3 + rng() * (this.map!.width - 6)
-        const cy = 3 + rng() * (this.map!.height - 6)
-        if (isWalkable(this.map!, cx, cy)) {
-          x = cx
-          y = cy
-          break
-        }
-      }
-      return { ...t, x, y }
+      const spot = placeCampfire({
+        rng,
+        width: this.map!.width,
+        height: this.map!.height,
+        walkable: (x, y) => isWalkable(this.map!, x, y),
+        blocked,
+        placed,
+        fallback: { x: this.map!.spawn[0] + 0.5, y: this.map!.spawn[1] - 2 },
+      })
+      placed.push(spot)
+      return { ...t, x: spot.x, y: spot.y }
     })
     // gallery: most recent images hang along the interior of the north wall
     const urls: { url: string; from: string }[] = []
@@ -2003,21 +2017,36 @@ export class App {
           ctx.fillRect(sx + 3, sy + 3, 2, 2)
           this.frameLights.push({ x: sx + 4, y: sy + 4, r: 34, c: pal.glow, p: 0.95 })
         }
-        if (t === TILE.DOOR) this.frameLights.push({ x: sx + 4, y: sy + 4, r: 18, c: pal.glow, p: 0.45 })
+        if (t === TILE.DOOR) this.frameLights.push({ x: sx + 4, y: sy + 6, r: 26, c: pal.glow, p: 0.7 })
         if (t === TILE.DECOR) {
-          // incidental furniture: crate/plant block with outline
-          ctx.fillStyle = shade(pal.decor, 0.55)
-          ctx.fillRect(sx, sy + 1, TILE_PX, TILE_PX - 1)
+          // A crate that sits ON the floor: contact shadow, lit top face, dark
+          // side. Flat grey rectangles scattered over a grid read as litter.
+          ctx.fillStyle = 'rgba(0,0,0,0.35)'
+          ctx.fillRect(sx, sy + TILE_PX - 2, TILE_PX, 2)
+          ctx.fillStyle = shade(pal.decor, 0.45)
+          ctx.fillRect(sx + 1, sy, TILE_PX - 2, TILE_PX - 1)
           ctx.fillStyle = pal.decor
-          ctx.fillRect(sx + 1, sy - 1, TILE_PX - 2, 5)
+          ctx.fillRect(sx + 1, sy - 2, TILE_PX - 2, 4)
+          ctx.fillStyle = shade(pal.decor, 1.35)
+          ctx.fillRect(sx + 1, sy - 2, TILE_PX - 2, 1)
+          ctx.fillStyle = 'rgba(0,0,0,0.25)'
+          ctx.fillRect(sx + TILE_PX - 2, sy - 1, 1, TILE_PX)
         }
         if (t === TILE.DOOR) {
-          ctx.fillStyle = pal.glow
-          ctx.fillRect(sx + 1, sy, 1, TILE_PX)
-          ctx.fillRect(sx + TILE_PX - 2, sy, 1, TILE_PX)
+          drawDoorTile(ctx, sx, sy, TILE_PX, pal.glow, {
+            left: tileAt(x - 1, y) !== TILE.DOOR,
+            right: tileAt(x + 1, y) !== TILE.DOOR,
+            floorBelow: tileAt(x, y + 1) !== TILE.WALL,
+          })
         }
       }
     }
+
+    // Every label this frame goes through one allocator, which keeps a dark
+    // plate behind the text and nudges a tag upward when it would land on one
+    // already drawn. Crowded rooms used to be an unreadable pile of names.
+    const tags = this.frameTags
+    tags.length = 0
 
     // objects: distinct furniture with accent tops and glyphs
     ctx.font = '7px monospace'
@@ -2036,8 +2065,10 @@ export class App {
       ctx.fillText(glyph, sx + 2, sy + 3)
       const near = Math.hypot(o.position[0] + 0.5 - this.me.x, o.position[1] + 0.5 - this.me.y) < 1.7
       if (near) {
-        ctx.fillStyle = '#ffd166'
-        ctx.fillText(`${o.label} [E]`, sx - 10, sy - 8)
+        // the canvas is 320px wide: a full label like "Obelisk of standing" is a
+        // third of the screen, so show a short name and let the card carry the rest
+        const short = o.label.length > 14 ? `${o.label.slice(0, 13)}…` : o.label
+        drawTag(ctx, `${short} [E]`, sx + TILE_PX / 2, sy - 14, '#ffd166', tags)
       }
     }
 
@@ -2053,20 +2084,15 @@ export class App {
         const bare = label.replace(/\s*\(\d+\)$/, '')
         label = bare.length > 9 ? `${bare.slice(0, 8)}…` : bare
       }
-      ctx.fillStyle = near ? '#ffd166' : '#8a8896'
-      const stagger = d.direction === 'north' || d.direction === 'south' ? (i % 2) * 8 : 0
-      const ly = d.direction === 'north' ? sy + 14 + stagger : d.direction === 'south' ? sy - 6 - stagger : sy + 10
-      ctx.fillText(label, Math.round(sx - label.length * 1.6), Math.round(ly))
+      const ly = d.direction === 'north' ? sy + 13 : d.direction === 'south' ? sy - 8 : sy + 10
+      drawTag(ctx, label, sx + TILE_PX / 2, ly, near ? '#ffd166' : '#9a98aa', tags)
       if (near) {
         // door peek: what's through here, live
         const entry = this.town?.directory?.find((e) => e.channel === d.channel)
         if (entry?.topic) {
-          ctx.fillStyle = '#b8b6c8'
-          const topic = entry.topic.length > 34 ? `${entry.topic.slice(0, 33)}…` : entry.topic
-          ctx.fillText(topic, Math.round(sx - topic.length * 1.6), Math.round(ly + 9))
+          const topic = entry.topic.length > 30 ? `${entry.topic.slice(0, 29)}…` : entry.topic
+          drawTag(ctx, topic, sx + TILE_PX / 2, ly + 10, '#b8b6c8', tags)
         }
-        ctx.fillStyle = '#ffd166'
-        ctx.fillText('▲', Math.round(sx + 2), Math.round(ly + (entry?.topic ? 18 : 8)))
       }
     })
 
@@ -2102,9 +2128,8 @@ export class App {
       ctx.fillStyle = '#fff3c4'
       ctx.fillRect(Math.round(fx), Math.round(fy - 1), 1, 2)
       ctx.font = '7px monospace'
-      ctx.fillStyle = active ? '#ffd166' : '#8a8896'
-      const label = active ? `🔥 ${t.preview.slice(0, 22)}… (${t.count})` : `thread (${t.count})`
-      ctx.fillText(label, Math.round(fx - label.length * 1.6), Math.round(fy - 8))
+      const label = active ? `🔥 ${t.preview.slice(0, 16)}… (${t.count})` : `thread (${t.count})`
+      drawTag(ctx, label, fx, fy - 14, active ? '#ffd166' : '#9a98aa', this.frameTags)
     }
 
     // the gallery: real channel media hanging on the wall
@@ -2348,8 +2373,11 @@ export class App {
     const name = d.me ? this.identity?.display_name ?? 'me' : member?.display_name ?? shortDid(d.did)
     ctx.font = '7px monospace'
     ctx.fillStyle = member?.is_agent ? '#ffb454' : d.me ? '#67c26b' : d.parked ? '#8a8896' : '#d8d6c8'
-    const label = member?.is_agent ? `⚙ ${name}` : member?.verification_status === 'verified' ? `◈ ${name}` : name
-    ctx.fillText(label, Math.round(sx - label.length * 2), Math.round(sy - 22))
+    // a long handle is 60px of a 320px view; clip it, the identity card has the
+    // whole thing
+    const short = name.length > 12 ? `${name.slice(0, 11)}…` : name
+    const label = member?.is_agent ? `⚙ ${short}` : member?.verification_status === 'verified' ? `◈ ${short}` : short
+    drawTag(ctx, label, sx, sy - 22, ctx.fillStyle as string, this.frameTags)
     // living presence: real typing + away signals
     const nickKey = (member?.nick ?? member?.display_name ?? '').toLowerCase()
     if (nickKey && this.typingNicks.has(nickKey)) {
@@ -2740,6 +2768,10 @@ export class App {
         sparks: this.sparks.count(),
         jumping: performance.now() < this.jumpUntil,
       }),
+      // where the thread campfires ended up, so placement can be inspected from
+      // outside without waiting for a room that happens to have threads today
+      threads: () =>
+        this.threadPlaces.map((t) => ({ root: t.root, count: t.count, x: +t.x.toFixed(2), y: +t.y.toFixed(2) })),
       teleport: (x: number, y: number) => {
         this.me.x = x
         this.me.y = y

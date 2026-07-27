@@ -262,3 +262,86 @@ export function drawScanlines(ctx: CanvasRenderingContext2D, w: number, h: numbe
   ctx.fillStyle = `rgba(0,0,0,${alpha})`
   for (let y = 0; y < h; y += 2) ctx.fillRect(0, y, w, 1)
 }
+
+
+/**
+ * A doorway that reads as a doorway.
+ *
+ * Before: a dark tile with a 1px line down each side, repeated across the three
+ * tiles of an opening — which looked like hatching on the wall, not somewhere
+ * you can walk. Now the opening is drawn as one object: a lit lintel across the
+ * top, posts only on the outer edges, a dark threshold, and warm light spilling
+ * onto the floor in front of it.
+ */
+export function drawDoorTile(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  size: number,
+  glow: string,
+  edges: { left: boolean; right: boolean; floorBelow: boolean },
+): void {
+  // the opening itself: darker than any floor, so it reads as depth
+  ctx.fillStyle = '#07070c'
+  ctx.fillRect(sx, sy, size, size)
+
+  // lintel across the top of the whole opening
+  ctx.fillStyle = glow
+  ctx.fillRect(sx, sy, size, 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.45)'
+  ctx.fillRect(sx, sy, size, 1)
+
+  // posts only where the opening actually ends
+  ctx.fillStyle = glow
+  if (edges.left) ctx.fillRect(sx, sy, 1, size)
+  if (edges.right) ctx.fillRect(sx + size - 1, sy, 1, size)
+
+  // a threshold strip, so the floor line reads as a step through
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'
+  ctx.fillRect(sx, sy + size - 2, size, 2)
+
+  // light spilling out onto the floor in front
+  if (edges.floorBelow) {
+    ctx.fillStyle = glow
+    ctx.globalAlpha = 0.16
+    ctx.fillRect(sx, sy + size, size, 3)
+    ctx.globalAlpha = 0.08
+    ctx.fillRect(sx - 1, sy + size + 3, size + 2, 3)
+    ctx.globalAlpha = 1
+  }
+}
+
+/**
+ * A label that can be read: dark plate, one pixel of padding, centred.
+ *
+ * Every tag in the world used to be bare 7px text straight onto a textured
+ * floor, and in a crowded room the names, the door labels and the topics all
+ * landed on top of each other.
+ */
+export function drawTag(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  cx: number,
+  y: number,
+  colour: string,
+  taken: { x: number; y: number; w: number; h: number }[],
+  opts: { plate?: boolean } = {},
+): void {
+  const w = text.length * 4 + 4
+  const h = 9
+  let x = Math.round(cx - w / 2)
+  let ty = Math.round(y)
+  // nudge upward until this tag isn't sitting on another one
+  for (let tries = 0; tries < 6; tries++) {
+    const clash = taken.some((r) => x < r.x + r.w && x + w > r.x && ty < r.y + r.h && ty + h > r.y)
+    if (!clash) break
+    ty -= h
+  }
+  taken.push({ x, y: ty, w, h })
+  if (opts.plate !== false) {
+    ctx.fillStyle = 'rgba(8,8,14,0.72)'
+    ctx.fillRect(x, ty, w, h)
+  }
+  ctx.fillStyle = colour
+  ctx.fillText(text, x + 2, ty + 7)
+}

@@ -232,3 +232,22 @@ describe('worldFromChannels (spec 7.5: dynamic world from real channels)', () =>
     expect(world.spawn).toBe('#general')
   })
 })
+
+describe('furniture does not stack on one tile', () => {
+  it('gives every object in a room its own square', () => {
+    // the real sample, so room widths are the ones the world actually builds
+    const world = worldFromChannels(REAL_SAMPLE)
+    let checked = 0
+    for (const room of world.rooms) {
+      const seen = new Map<string, string>()
+      for (const o of room.objects) {
+        const key = `${o.position[0]},${o.position[1]}`
+        expect(Number.isFinite(o.position[0]) && Number.isFinite(o.position[1]), `${room.channel}: ${o.id} has position ${key}`).toBe(true)
+        expect(seen.has(key), `${room.channel}: ${o.id} sits on ${seen.get(key)} at ${key}`).toBe(false)
+        seen.set(key, o.id)
+        checked++
+      }
+    }
+    expect(checked).toBeGreaterThan(10)
+  })
+})
