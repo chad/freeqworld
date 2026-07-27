@@ -732,6 +732,11 @@ for (const [i, agent] of AGENTS.entries()) {
       try { client.whois(nick) } catch { /* not connected */ }
       return `i need to know your DID before i can put your name on an invite, ${nick} — try again in a moment.`
     }
+    // an invitation carries your NAME, and the link unfurls with it — so it has
+    // to be a name, not a browser key that vanishes with the tab
+    if (!inviter.startsWith('did:plc:') && !inviter.startsWith('did:web:')) {
+      return `an invitation goes out with your name on it, ${nick}, so it needs a real one — sign in with your Bluesky handle and ask me again.`
+    }
     const today = new Date().toISOString().slice(0, 10)
     const usedToday = [...creditedReferrals].filter((k) => k.startsWith(`${inviter}|`) && k.endsWith(`|${today}`)).length
     if (usedToday >= REFERRALS_PER_DAY) {

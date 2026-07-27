@@ -47,9 +47,9 @@ action trivially achievable, (c) make the reward provable and shareable.
 - [ ] **4. First steps checklist.** Five real, verifiable items with live
       progress, shown once in-world, gone when complete. Every item is a thing
       the ledger can confirm — no fake "tutorial complete".
-- [ ] **5. "Make mine" CTA** when viewing somebody else's character.
-- [ ] **6. Share at the moment of reward** — first completion offers the card.
-- [ ] **7. Invite links unfurl** as "X invited you", with the host's card.
+- [x] **5. "Make mine" CTA** when viewing somebody else's character.
+- [x] **6. Share at the moment of reward** — first completion offers the card.
+- [x] **7. Invite links unfurl** as "X invited you", with the host's card.
 
 ## Rules I am holding myself to tonight
 
@@ -81,3 +81,54 @@ Also fixed: the stale-build self-heal in client/src/main.ts reloaded to
 `?r=<ts>` and DROPPED the query string, so an invite arriving on a cached build
 lost its token. It now preserves the search params.
 
+
+**4 done — first steps.** Five items, none of which tick because you clicked
+something: a real identity, hearing your own theme, a run in the signed ledger,
+an avatar whose bytes hash to your DID, and somebody you actually brought in.
+Read back from `/api/xp` and `/api/face`, and it retires itself for good when all
+five are genuinely true. Two bugs the browser test caught first: it rendered over
+the landing overlay and swallowed the "enter world" click, then (once gated) took
+20s to appear because the interval was created before entry.
+
+**5, 6, 7 done.** "See mine" when you land on somebody else's card; the card
+offered at the moment a first witnessed run lands (once, ever); and `/i/<token>`
+unfurls as *"X invited you into FreeqWorld"* with the host's card — verified
+through Bluesky's own extractor. A forged token gets a 404, because the witness
+signature is checked before anyone's name goes on an unfurl.
+
+**Mobile.** Shared links are opened on phones, so I measured: the checklist was
+914px tall on a 664px screen, covering the world. Narrow screens now get the
+progress and the next step only, capped at half the viewport.
+
+**One tap instead of an exact phrase.** "say cartographer, quest" is friction,
+worse on a phone. The step now carries the sentence and a button sends it into
+the room; verified end to end that one tap produces a real sealed envelope.
+
+**Tightened:** an invitation carries your name and unfurls with it, so the
+inviter now needs a real identity too (it was showing a raw did:key in the
+unfurl title).
+
+## Where the funnel stands, walked live at the end
+
+```
+shared card  ->  hears the theme, sees "see mine"            ✓
+"see mine"   ->  own character + theme + where they stand     ✓
+              ->  "enter the world as this character" CTA     ✓
+world        ->  handle carried over, Bluesky is the primary  ✓
+              ->  first steps, all five verifiable            ✓
+              ->  one tap asks the Cartographer for a run     ✓
+reward       ->  card offered the moment the run lands        ✓
+invite       ->  unfurls as the host, greets you by name      ✓
+```
+
+## Not done / known gaps
+
+- **The OAuth leg of an invited arrival is untested end to end.** Redemption
+  needs a real Bluesky sign-in, and I have no spare account. The token survives
+  in localStorage and `redeemPendingInvite` fires on `onAuth`; the pieces are
+  unit-tested, but nobody has walked it with a real handle. **First thing worth
+  trying in the morning.**
+- The invite card reuses the host's normal share card. A dedicated "X invites
+  you" image would be better.
+- No funnel measurement. Deliberate: tracking visitors would contradict the
+  privacy stance. Real actions are already visible in the signed ledger.
