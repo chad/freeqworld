@@ -2023,11 +2023,11 @@ export class App {
           // side. Flat grey rectangles scattered over a grid read as litter.
           ctx.fillStyle = 'rgba(0,0,0,0.35)'
           ctx.fillRect(sx, sy + TILE_PX - 2, TILE_PX, 2)
-          ctx.fillStyle = shade(pal.decor, 0.45)
+          ctx.fillStyle = shade(pal.decor, 0.34)
           ctx.fillRect(sx + 1, sy, TILE_PX - 2, TILE_PX - 1)
-          ctx.fillStyle = pal.decor
+          ctx.fillStyle = shade(pal.decor, 0.62)
           ctx.fillRect(sx + 1, sy - 2, TILE_PX - 2, 4)
-          ctx.fillStyle = shade(pal.decor, 1.35)
+          ctx.fillStyle = shade(pal.decor, 0.85)
           ctx.fillRect(sx + 1, sy - 2, TILE_PX - 2, 1)
           ctx.fillStyle = 'rgba(0,0,0,0.25)'
           ctx.fillRect(sx + TILE_PX - 2, sy - 1, 1, TILE_PX)
@@ -2116,20 +2116,48 @@ export class App {
       const fy = t.y * TILE_PX - cam.y
       if (fx < -16 || fy < -16 || fx > VIEW_W + 16 || fy > VIEW_H + 16) continue
       const active = t.root === this.activeThread
-      // log ring
+      const x0 = Math.round(fx)
+      const y0 = Math.round(fy)
+      // A campfire is an invitation to sit down, so it has to look like one.
+      // It used to be three brown pixels and a 3x5 orange rectangle — smaller
+      // than its own label, and invisible in a bright room.
+      // scorched ground
+      ctx.fillStyle = 'rgba(0,0,0,0.38)'
+      ctx.fillRect(x0 - 6, y0 + 2, 13, 4)
+      ctx.fillRect(x0 - 5, y0 + 1, 11, 6)
+      // stone ring
+      ctx.fillStyle = '#4a4658'
+      for (const [ox, oy] of [[-6, 2], [-4, 4], [0, 5], [4, 4], [5, 2], [-5, 0], [5, 0]] as const) {
+        ctx.fillRect(x0 + ox, y0 + oy, 2, 2)
+      }
+      // logs, crossed
       ctx.fillStyle = '#4a3520'
-      ctx.fillRect(Math.round(fx - 4), Math.round(fy + 2), 3, 2)
-      ctx.fillRect(Math.round(fx + 2), Math.round(fy + 2), 3, 2)
-      ctx.fillRect(Math.round(fx - 1), Math.round(fy + 3), 3, 2)
-      // flame flicker
-      const flick = Math.sin(nowT / 110 + t.x) > 0
-      ctx.fillStyle = active ? '#ffd166' : '#e8853a'
-      ctx.fillRect(Math.round(fx - 1), Math.round(fy - (flick ? 3 : 2)), 3, flick ? 5 : 4)
+      ctx.fillRect(x0 - 4, y0 + 1, 9, 2)
+      ctx.fillStyle = '#5c4228'
+      ctx.fillRect(x0 - 3, y0 - 1, 7, 2)
+      // flame: two flickering layers, so it moves without a sprite sheet
+      const f1 = Math.sin(nowT / 90 + t.x * 3)
+      const f2 = Math.sin(nowT / 47 + t.y * 5)
+      const h1 = 6 + Math.round(f1 * 1.6)
+      const h2 = 3 + Math.round(f2 * 1.2)
+      ctx.fillStyle = active ? '#ff9a3c' : '#e8853a'
+      ctx.fillRect(x0 - 2, y0 - h1, 5, h1 + 1)
+      ctx.fillRect(x0 - 1, y0 - h1 - 2, 3, 2)
+      ctx.fillStyle = active ? '#ffd166' : '#ffb454'
+      ctx.fillRect(x0 - 1, y0 - h2 - 1, 3, h2 + 1)
       ctx.fillStyle = '#fff3c4'
-      ctx.fillRect(Math.round(fx), Math.round(fy - 1), 1, 2)
+      ctx.fillRect(x0, y0 - h2, 1, Math.max(1, h2 - 1))
+      // embers rising, only on the fire you're sitting at
+      if (active) {
+        ctx.fillStyle = 'rgba(255,209,102,0.7)'
+        for (let e = 0; e < 3; e++) {
+          const t2 = ((nowT / 620 + e * 0.37) % 1)
+          ctx.fillRect(x0 - 2 + Math.round(Math.sin(t2 * 6 + e) * 3), y0 - 8 - Math.round(t2 * 12), 1, 1)
+        }
+      }
       ctx.font = '7px monospace'
       const label = active ? `🔥 ${t.preview.slice(0, 16)}… (${t.count})` : `thread (${t.count})`
-      drawTag(ctx, label, fx, fy - 14, active ? '#ffd166' : '#9a98aa', this.frameTags)
+      drawTag(ctx, label, fx, fy - 22, active ? '#ffd166' : '#9a98aa', this.frameTags)
     }
 
     // the gallery: real channel media hanging on the wall
