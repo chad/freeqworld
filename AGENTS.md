@@ -92,3 +92,17 @@ failure is the recurring theme in every expensive bug above: the auth failure
 that showed nothing, the courier refusal that logged nothing, the music that
 said "now playing" while making no sound. If you add a failure path, log it and
 surface it.
+
+## Shipping the ID app
+
+`node scripts/deploy-pfp.mjs` — never a hand-rolled rsync. It builds both pfp
+targets (the `/id/` and root bases produce different asset hashes), refuses to
+ship a bundle older than its sources, and verifies the live hash matches.
+
+The trap it closes: `pfp/dist-root/` is a build artifact, so an rsync with no
+build in front of it silently ships whatever was there last. The container
+serves TypeScript at runtime and therefore gets source changes from
+`miren deploy` alone — so an HTTP route can be correct while the browser bundle
+is stale, and a server-side check will not notice. **After changing anything in
+`pfp/`, `music/src/` or `shared/src/`, verify through a real browser, not just
+curl.**
