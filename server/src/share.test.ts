@@ -100,7 +100,8 @@ describe('score page', () => {
 
   it('unfurls as a piece of music, not a generic page', async () => {
     const html = await scorePage(ID, 'https://pfp.freeq.at')
-    expect(html).toContain('<meta property="og:type" content="music.song" />')
+    // deliberately NOT music.song — see the twitter:player note below
+    expect(html).toContain('<meta property="og:type" content="article" />')
     expect(html).toMatch(/og:title" content="[^"]*@bsky\.app's theme/)
     expect(html).toContain('og:image')
     // the key and tempo are facts about the derivation, so they belong in the unfurl
@@ -158,5 +159,38 @@ describe('score card (the unfurl image)', () => {
     const a = await renderScoreCard('did:plc:aaaaaaaaaaaaaaaaaaaaaaaa', '@a.example')
     const b = await renderScoreCard('did:plc:bbbbbbbbbbbbbbbbbbbbbbbb', '@b.example')
     expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false)
+  })
+})
+
+describe('score page unfurl tags', () => {
+  const ID: Identity = { did: 'did:plc:z72i7hdynmk6r22z27h6tvur', handle: 'bsky.app', label: '@bsky.app' }
+
+  it('names the twitter tags explicitly rather than trusting og fallback', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('name="twitter:card" content="summary_large_image"')
+    expect(html).toContain('name="twitter:image" content="https://pfp.freeq.at/score/bsky.app.png"')
+    expect(html).toMatch(/name="twitter:title"/)
+    expect(html).toMatch(/name="twitter:description"/)
+  })
+
+  it('does not advertise audio without a player, which costs the card on X', async () => {
+    // strip comments: the note explaining this contains the very strings it forbids
+    const html = (await scorePage(ID, 'https://pfp.freeq.at')).replace(/<!--[\s\S]*?-->/g, '')
+    // og:audio + no twitter:player => X attempts a player card and renders none
+    expect(html).not.toContain('og:audio')
+    expect(html).not.toContain('music.song')
+  })
+
+  it('declares the image dimensions and a canonical url', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('og:image:width" content="1200"')
+    expect(html).toContain('og:image:height" content="630"')
+    expect(html).toContain('og:url" content="https://pfp.freeq.at/score/bsky.app"')
+    expect(html).toContain('rel="canonical"')
+  })
+
+  it('describes the image for anyone who cannot see it', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toMatch(/og:image:alt" content="The opening bars of [^"]+, engraved"/)
   })
 })

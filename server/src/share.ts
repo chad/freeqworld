@@ -430,6 +430,7 @@ export async function scorePage(id: Identity, origin: string): Promise<string> {
   const midiUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.mid`
   const wavUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.wav`
   const cardUrl = `${origin}/score/${encodeURIComponent(id.handle || id.did)}.png`
+  const pageUrl = `${origin}/score/${encodeURIComponent(id.handle || id.did)}`
   const title = `${who}'s theme — ${theme.name}`
   const desc =
     `${theme.key} ${theme.scale}, ${theme.bpm} BPM. Composed from ${who}'s identity by HKDF — ` +
@@ -439,12 +440,30 @@ export async function scorePage(id: Identity, origin: string): Promise<string> {
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)}</title>
 <meta name="description" content="${esc(desc)}" />
-<meta property="og:type" content="music.song" />
+<link rel="canonical" href="${esc(pageUrl)}" />
+<meta property="og:url" content="${esc(pageUrl)}" />
+<meta property="og:site_name" content="FreeqWorld" />
+<!-- NOT music.song. With og:audio present, X tries to build a PLAYER card,
+     which needs twitter:player and is rejected without it — so the post gets no
+     card at all. Slack is happy either way, which is why this looked fine there
+     and nowhere else. The audio stays discoverable via the page and og:audio is
+     dropped rather than half-declared. -->
+<meta property="og:type" content="article" />
 <meta property="og:title" content="${esc(title)}" />
 <meta property="og:description" content="${esc(desc)}" />
 <meta property="og:image" content="${esc(cardUrl)}" />
-<meta property="og:audio" content="${esc(wavUrl)}" />
+<meta property="og:image:secure_url" content="${esc(cardUrl)}" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="${esc(`The opening bars of ${theme.name}, engraved`)}" />
+<!-- X falls back to og:* only patchily; naming them explicitly is the
+     difference between a large card and no card. -->
 <meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${esc(title)}" />
+<meta name="twitter:description" content="${esc(desc)}" />
+<meta name="twitter:image" content="${esc(cardUrl)}" />
+<meta name="twitter:image:alt" content="${esc(`The opening bars of ${theme.name}, engraved`)}" />
 <link rel="alternate" type="application/vnd.recordare.musicxml+xml" href="${esc(xmlUrl)}" />
 <style>
   :root { --bg:#0d0d14; --fg:#d8d6c8; --dim:#8a8896; --amber:#ffd166; --cyan:#56c9d6; --border:#2a2a38; }
