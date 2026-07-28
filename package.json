@@ -18,8 +18,8 @@
     "@freeq/sdk": "file:./vendor/freeq-sdk",
     "opensheetmusicdisplay": "^2.1.0",
     "tweetnacl": "^1.0.3",
-    "vite": "^5.4.0",
-    "vite-node": "^2.1.9",
+    "vite": "^8.1.5",
+    "vite-node": "^6.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -27,7 +27,7 @@
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^4.1.10"
   },
   "optionalDependencies": {
     "ffmpeg-static": "^5.2.0"
