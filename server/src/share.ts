@@ -15,6 +15,7 @@
 //   X / Slack — static image (player cards need vendor approval).
 
 import { renderCard } from './card.ts'
+import { renderScoreCard } from './scorecard.ts'
 import { compose } from '../../music/src/compose.ts'
 import { mintChiptune } from '../../music/src/mint.ts'
 import { renderScore } from '../../music/src/synth.ts'
@@ -105,6 +106,17 @@ export async function cardPng(id: Identity): Promise<Buffer> {
   cardCache.set(id.did, { png, at: Date.now() })
   if (cardCache.size > 500) cardCache.delete(cardCache.keys().next().value!)
   return png
+}
+
+/** The unfurl image for /score/<who>: the opening phrase, engraved. */
+const scoreCardCache = new Map<string, { png: Uint8Array; at: number }>()
+export async function scoreCardPng(id: Identity): Promise<Buffer> {
+  const hit = scoreCardCache.get(id.did)
+  if (hit && Date.now() - hit.at < TTL) return Buffer.from(hit.png)
+  const png = await renderScoreCard(id.did, id.label)
+  scoreCardCache.set(id.did, { png, at: Date.now() })
+  if (scoreCardCache.size > 400) scoreCardCache.delete(scoreCardCache.keys().next().value!)
+  return Buffer.from(png)
 }
 
 /** The loop as a wav — a direct audio link unfurls as a player in Discord. */
@@ -417,7 +429,7 @@ export async function scorePage(id: Identity, origin: string): Promise<string> {
   const xmlUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.musicxml`
   const midiUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.mid`
   const wavUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.wav`
-  const cardUrl = `${origin}/card/${encodeURIComponent(id.handle || id.did)}.png`
+  const cardUrl = `${origin}/score/${encodeURIComponent(id.handle || id.did)}.png`
   const title = `${who}'s theme — ${theme.name}`
   const desc =
     `${theme.key} ${theme.scale}, ${theme.bpm} BPM. Composed from ${who}'s identity by HKDF — ` +

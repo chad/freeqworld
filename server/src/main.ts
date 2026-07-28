@@ -9,7 +9,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, scorePage, stingerWav, themeScore, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, scoreCardPng, scorePage, stingerWav, themeScore, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
 import {
   completionsFromEvents, levelFor, QUEST_EVENT, QUEST_KINDS, standings, verifyQuestEvent,
@@ -464,6 +464,11 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
       }
       // the theme as engraved sheet music, with the downloads under it
       if (kind === 'score') {
+        if (/\.png$/i.test(rawWho)) {
+          const png = await scoreCardPng(id)
+          sendMedia(req, res, png, 'image/png')
+          return
+        }
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
         res.end(await scorePage(id, base))
         return

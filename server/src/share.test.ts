@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { appPageWithOg, scorePage, type Identity } from './share.ts'
+import { appPageWithOg, scoreCardPng, scorePage, type Identity } from './share.ts'
+import { renderScoreCard } from './scorecard.ts'
 import { ffmpeg, renderClip } from './clip.ts'
 
 const INDEX = `<!doctype html><html><head><title>FreeqWorld ID</title>
@@ -127,5 +128,35 @@ describe('score page', () => {
   it('names the DID the score is derived from', async () => {
     const html = await scorePage(ID, 'https://pfp.freeq.at')
     expect(html).toContain('did:plc:z72i7hdynmk6r22z27h6tvur')
+  })
+})
+
+describe('score card (the unfurl image)', () => {
+  const ID: Identity = { did: 'did:plc:z72i7hdynmk6r22z27h6tvur', handle: 'bsky.app', label: '@bsky.app' }
+
+  it('the score page unfurls with its own music, not the character card', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('og:image" content="https://pfp.freeq.at/score/bsky.app.png"')
+    expect(html).not.toContain('og:image" content="https://pfp.freeq.at/card/')
+  })
+
+  it('renders a 1200x630 PNG', async () => {
+    const png = await scoreCardPng(ID)
+    expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    // IHDR width/height, big-endian at bytes 16..24
+    expect(png.readUInt32BE(16)).toBe(1200)
+    expect(png.readUInt32BE(20)).toBe(630)
+  })
+
+  it('is deterministic — the same DID always produces the same bytes', async () => {
+    const a = await renderScoreCard(ID.did, ID.label)
+    const b = await renderScoreCard(ID.did, ID.label)
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true)
+  })
+
+  it('differs between identities', async () => {
+    const a = await renderScoreCard('did:plc:aaaaaaaaaaaaaaaaaaaaaaaa', '@a.example')
+    const b = await renderScoreCard('did:plc:bbbbbbbbbbbbbbbbbbbbbbbb', '@b.example')
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false)
   })
 })
