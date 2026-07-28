@@ -147,6 +147,55 @@ export function layOutMeasures(notes: Note[], barTicks: number, totalTicks: numb
   return measures
 }
 
+/**
+ * Beam groups within a measure.
+ *
+ * Without <beam> elements every eighth gets its own flag, which is legal but
+ * looks like a beginner's transcription — a bar of eight separate flagged
+ * eighths instead of two clean beamed groups.
+ *
+ * Deliberately conservative: only runs of EQUAL duration inside one beat are
+ * beamed. Mixed groups (an eighth and two sixteenths) need secondary beams that
+ * break at the right subdivisions, and getting that subtly wrong looks worse
+ * than honest flags.
+ */
+export function beamGroups(slots: Slot[], barStart: number, beatTicks: number): Map<number, string[]> {
+  const out = new Map<number, string[]>()
+  const beamsFor = (dur: number): number => {
+    if (dur >= TPQ) return 0
+    if (dur >= TPQ / 2) return 1 // eighth
+    if (dur >= TPQ / 4) return 2 // sixteenth
+    return 3
+  }
+  let i = 0
+  while (i < slots.length) {
+    const s = slots[i]!
+    const levels = s.note ? beamsFor(s.dur) : 0
+    if (!s.note || levels === 0 || s.tieStart || s.tieStop) {
+      i++
+      continue
+    }
+    const beat = Math.floor((s.start - barStart) / beatTicks)
+    // extend while: same duration, same beat, still a note, no tie
+    let j = i
+    while (j + 1 < slots.length) {
+      const n = slots[j + 1]!
+      if (!n.note || n.dur !== s.dur) break
+      if (Math.floor((n.start - barStart) / beatTicks) !== beat) break
+      if (n.tieStart || n.tieStop) break
+      j++
+    }
+    if (j > i) {
+      for (let k = i; k <= j; k++) {
+        const where = k === i ? 'begin' : k === j ? 'end' : 'continue'
+        out.set(k, Array.from({ length: levels }, () => where))
+      }
+    }
+    i = j + 1
+  }
+  return out
+}
+
 export interface MusicXmlOptions {
   title?: string
   /** shown as the composer line; the world puts the handle or DID here */
@@ -201,8 +250,10 @@ export function encodeMusicXml(score: Score, opts: MusicXmlOptions = {}): string
                 `        <clef><sign>${clef.sign}</sign><line>${clef.line}</line></clef>\n` +
                 `      </attributes>\n`
               : ''
+          // NB: `beats` above is the time-signature numerator; don't shadow it
+          const beamed = beamGroups(slots, mi * barTicks, (TPQ * 4) / unit)
           const notes = slots
-            .map((s) => {
+            .map((s, si) => {
               const { type, dots } = noteType(s.dur)
               const dotTags = '<dot/>'.repeat(dots)
               if (!s.note) {
@@ -220,12 +271,16 @@ export function encodeMusicXml(score: Score, opts: MusicXmlOptions = {}): string
                 (s.tieStop ? '<tied type="stop"/>' : '') + (s.tieStart ? '<tied type="start"/>' : '')
               const artic = s.staccato ? '<articulations><staccato/></articulations>' : ''
               const notations = tied || artic ? `        <notations>${tied}${artic}</notations>\n` : ''
+              const beam = (beamed.get(si) ?? [])
+                .map((where, lvl) => `        <beam number="${lvl + 1}">${where}</beam>\n`)
+                .join('')
               return (
                 `      <note>\n` +
                 `        <pitch><step>${p.step}</step>${alter}<octave>${p.octave}</octave></pitch>\n` +
                 `        <duration>${s.dur}</duration>\n` +
                 ties +
                 `        <voice>1</voice>\n        <type>${type}</type>${dotTags}\n` +
+                beam +
                 notations +
                 `      </note>`
               )

@@ -114,8 +114,17 @@ function rememberInUrl(): void {
 /** The canonical share URL for whoever is on screen. Same origin as the app, so
  *  it works on pfp.freeq.at and at world.freeq.at/id alike. */
 function shareUrl(): string {
-  const who = currentLabel.startsWith('@') ? currentLabel.slice(1) : currentDid ?? ''
-  return `${location.origin}${APP_BASE}u/${encodeURIComponent(who)}`
+  return `${location.origin}${APP_BASE}u/${encodeURIComponent(shareWho())}`
+}
+
+/** Handle if we have one, DID otherwise — what the share routes key on. */
+function shareWho(): string {
+  return currentLabel.startsWith('@') ? currentLabel.slice(1) : currentDid ?? ''
+}
+
+/** The engraved score page for whoever is on screen. */
+function scoreUrl(): string {
+  return `${location.origin}${APP_BASE}score/${encodeURIComponent(shareWho())}`
 }
 
 function openShare(): void {
@@ -262,6 +271,12 @@ function bind(): void {
   $('theme-midi').addEventListener('click', (e) => {
     e.preventDefault()
     downloadScore(currentLabel, 'midi')
+  })
+  // Sheet music you can look at beats a file in ~/Downloads: the page renders
+  // the score and carries the MusicXML download itself.
+  $('theme-sheet').addEventListener('click', (e) => {
+    e.preventDefault()
+    window.open(scoreUrl(), '_blank', 'noopener')
   })
   $('theme-xml').addEventListener('click', (e) => {
     e.preventDefault()

@@ -401,3 +401,122 @@ export async function invitePage(view: InviteView, origin: string, worldOrigin: 
   <p>${esc(title)} — <a href="${esc(enter)}">come in</a></p>
 </div></body></html>`
 }
+
+/**
+ * The score page: your theme as engraved sheet music, in the browser.
+ *
+ * A file that lands in ~/Downloads is a worse artefact than a page you can look
+ * at and send to somebody. This renders the same MusicXML with
+ * OpenSheetMusicDisplay (lazy — 313kB gzipped, and it must never enter the main
+ * ID app bundle), on paper-white, with the downloads and the audio underneath.
+ */
+export async function scorePage(id: Identity, origin: string): Promise<string> {
+  const minted = await mintChiptune(id.did, 16)
+  const who = id.label
+  const theme = minted.theme
+  const xmlUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.musicxml`
+  const midiUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.mid`
+  const wavUrl = `${origin}/theme/${encodeURIComponent(id.handle || id.did)}.wav`
+  const cardUrl = `${origin}/card/${encodeURIComponent(id.handle || id.did)}.png`
+  const title = `${who}'s theme — ${theme.name}`
+  const desc =
+    `${theme.key} ${theme.scale}, ${theme.bpm} BPM. Composed from ${who}'s identity by HKDF — ` +
+    `not chosen, not uploaded. Sheet music, MIDI and MusicXML, all recomputable from the DID.`
+  return `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${esc(title)}</title>
+<meta name="description" content="${esc(desc)}" />
+<meta property="og:type" content="music.song" />
+<meta property="og:title" content="${esc(title)}" />
+<meta property="og:description" content="${esc(desc)}" />
+<meta property="og:image" content="${esc(cardUrl)}" />
+<meta property="og:audio" content="${esc(wavUrl)}" />
+<meta name="twitter:card" content="summary_large_image" />
+<link rel="alternate" type="application/vnd.recordare.musicxml+xml" href="${esc(xmlUrl)}" />
+<style>
+  :root { --bg:#0d0d14; --fg:#d8d6c8; --dim:#8a8896; --amber:#ffd166; --cyan:#56c9d6; --border:#2a2a38; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { max-width:1000px; margin:0 auto; padding:24px 20px 12px; }
+  h1 { font-size:1.3rem; margin:0 0 4px; color:var(--amber); }
+  .sub { color:var(--dim); font-size:.85rem; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin:12px 0 0; }
+  .chip { border:1px solid var(--border); border-radius:999px; padding:3px 10px; font-size:.78rem; }
+  .chip b { color:var(--cyan); font-weight:600; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:14px 0 0; }
+  a.btn, button.btn { display:inline-block; padding:6px 12px; border-radius:6px; cursor:pointer;
+        border:1px solid var(--border); background:#161620; color:var(--cyan);
+        text-decoration:none; font:inherit; font-size:.82rem; }
+  a.btn:hover, button.btn:hover { border-color:var(--cyan); }
+  a.btn.primary { background:var(--amber); color:#1a1a22; border-color:var(--amber); font-weight:600; }
+  /* the score itself sits on paper, because that is what it is */
+  #paper { background:#fff; margin:18px auto 40px; max-width:1000px; border-radius:8px;
+           padding:14px 8px 24px; min-height:220px; overflow-x:auto; }
+  #status { color:var(--dim); text-align:center; padding:60px 20px; font-size:.85rem; }
+  footer { max-width:1000px; margin:0 auto; padding:0 20px 40px; color:var(--dim); font-size:.78rem; line-height:1.6; }
+  footer a { color:var(--cyan); }
+</style>
+</head><body>
+<header>
+  <h1>${esc(theme.name)}</h1>
+  <div class="sub">${esc(who)}'s theme — derived from their identity, not chosen</div>
+  <div class="chips">
+    <span class="chip"><b>key</b> ${esc(theme.key)} ${esc(theme.scale)}</span>
+    <span class="chip"><b>tempo</b> ${theme.bpm} BPM</span>
+    <span class="chip"><b>meter</b> ${theme.meter[0]}/${theme.meter[1]}</span>
+  </div>
+  <div class="bar">
+    <audio id="audio" src="${esc(wavUrl)}" preload="none"></audio>
+    <button class="btn primary" id="play">▶ play</button>
+    <a class="btn" href="${esc(xmlUrl)}" download>download musicxml</a>
+    <a class="btn" href="${esc(midiUrl)}" download>download midi</a>
+    <a class="btn" href="${esc(wavUrl)}" download>download wav</a>
+    <a class="btn" href="${origin}/u/${encodeURIComponent(id.handle || id.did)}">the character →</a>
+  </div>
+</header>
+<div id="paper"><div id="status">engraving…</div></div>
+<footer>
+  Engraved in your browser from MusicXML with
+  <a href="https://opensheetmusicdisplay.org/" target="_blank" rel="noopener">OpenSheetMusicDisplay</a>.
+  Every note here is a pure function of <code>${esc(id.did)}</code> — the same input always
+  produces this same score. Open the MusicXML in MuseScore, Sibelius or Dorico, or the MIDI in any DAW.
+</footer>
+<script src="${origin}/osmd.js"></script>
+<script>
+  var play = document.getElementById('play'), audio = document.getElementById('audio');
+  audio.loop = true;
+  play.addEventListener('click', function () {
+    if (audio.paused) { audio.play(); play.textContent = '■ stop'; }
+    else { audio.pause(); audio.currentTime = 0; play.textContent = '▶ play'; }
+  });
+  // NB: not \`status\` — window.status is a legacy DOMString property, so
+  // \`var status = <element>\` coerces the element to "[object HTMLDivElement]".
+  // That silently broke the error path itself: .remove() threw, the catch ran,
+  // and assigning .textContent to a primitive is a no-op, so the page sat on
+  // "engraving…" forever with no console error.
+  var statusEl = document.getElementById('status');
+  function fail(msg) {
+    console.error('[score]', msg);
+    if (statusEl) statusEl.textContent = msg;
+  }
+  if (typeof opensheetmusicdisplay === 'undefined') {
+    fail('the engraver did not load — the MusicXML download above still works.');
+  } else {
+    fetch(${JSON.stringify(xmlUrl)})
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+      .then(function (xml) {
+        var osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('paper', {
+          autoResize: true, drawTitle: false, drawPartNames: true, drawComposer: false,
+        });
+        return osmd.load(xml).then(function () {
+          if (statusEl) statusEl.remove();
+          osmd.render();
+        });
+      })
+      .catch(function (e) { fail('could not engrave this score: ' + e.message + ' — the downloads above still work.'); });
+  }
+</script>
+</body></html>`
+}

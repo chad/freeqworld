@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appPageWithOg, type Identity } from './share.ts'
+import { appPageWithOg, scorePage, type Identity } from './share.ts'
 import { ffmpeg, renderClip } from './clip.ts'
 
 const INDEX = `<!doctype html><html><head><title>FreeqWorld ID</title>
@@ -82,5 +82,50 @@ describe('asset base', () => {
   it('leaves it alone under /id/ (world.freeq.at)', async () => {
     const html = await appPageWithOg(ID, 'https://pfp.freeq.at', INDEX_ID, { basePath: '/id/' })
     expect(html).toContain('src="/id/assets/index-abc.js"')
+  })
+})
+
+describe('score page', () => {
+  const ID: Identity = { did: 'did:plc:z72i7hdynmk6r22z27h6tvur', handle: 'bsky.app', label: '@bsky.app' }
+
+  it('carries the downloads and the engraver', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('/theme/bsky.app.musicxml')
+    expect(html).toContain('/theme/bsky.app.mid')
+    expect(html).toContain('/theme/bsky.app.wav')
+    expect(html).toContain('/osmd.js')
+    expect(html).toContain('id="paper"')
+  })
+
+  it('unfurls as a piece of music, not a generic page', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('<meta property="og:type" content="music.song" />')
+    expect(html).toMatch(/og:title" content="[^"]*@bsky\.app's theme/)
+    expect(html).toContain('og:image')
+    // the key and tempo are facts about the derivation, so they belong in the unfurl
+    expect(html).toMatch(/og:description" content="[^"]*BPM/)
+  })
+
+  it('does not use `status` as a global, which window.status silently breaks', async () => {
+    // window.status is a legacy DOMString: `var status = <element>` coerces the
+    // element to a string, so .remove() throws and .textContent = msg no-ops —
+    // the page hangs on "engraving…" with nothing in the console.
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    // strip comments first: the explanation of this bug contains the bug
+    const code = html.replace(/^\s*\/\/.*$/gm, '')
+    expect(code, 'window.status collision is back').not.toMatch(/var status\s*=/)
+    expect(code).toContain('statusEl')
+  })
+
+  it('states the failure in the page when the engraver cannot run', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('the engraver did not load')
+    expect(html).toContain('could not engrave this score')
+    expect(html).toContain("console.error('[score]'")
+  })
+
+  it('names the DID the score is derived from', async () => {
+    const html = await scorePage(ID, 'https://pfp.freeq.at')
+    expect(html).toContain('did:plc:z72i7hdynmk6r22z27h6tvur')
   })
 })

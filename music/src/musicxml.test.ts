@@ -16,7 +16,7 @@ const mintOnce = (() => {
   }
 })()
 import {
-  encodeMusicXml, layOutMeasures, NOTATION_GRID, noteType, quantizeForNotation, spell,
+  beamGroups, encodeMusicXml, layOutMeasures, NOTATION_GRID, noteType, quantizeForNotation, spell,
 } from './musicxml'
 import { ticksPerBar, TPQ, type Note, type Score } from './score'
 
@@ -265,5 +265,60 @@ describe('written durations vs sounding durations', () => {
     expect(xml).not.toContain('<type>32nd</type>')
     // and no double dots, which is what 7/16-of-a-quarter turned into
     expect(xml).not.toContain('<dot/><dot/>')
+  })
+})
+
+describe('beaming', () => {
+  const bar = ticksPerBar([4, 4])
+  const eighths = (n: number): Note[] =>
+    Array.from({ length: n }, (_, i) => ({ ch: 'pulse1' as const, patch: 'x', t: i * 24, dur: 24, midi: 60 }))
+
+  it('beams equal eighths within a beat, two per group in 4/4', () => {
+    const slots = layOutMeasures(eighths(8), bar, bar)[0]!
+    const groups = beamGroups(slots, 0, TPQ)
+    // 8 eighths = 4 beats of 2 -> every note beamed, each group begin/end
+    expect(groups.size).toBe(8)
+    expect(groups.get(0)).toEqual(['begin'])
+    expect(groups.get(1)).toEqual(['end'])
+    expect(groups.get(2)).toEqual(['begin'])
+  })
+
+  it('does not beam across a beat boundary', () => {
+    const slots = layOutMeasures(eighths(8), bar, bar)[0]!
+    const groups = beamGroups(slots, 0, TPQ)
+    // note 1 ends its group; note 2 starts a new one
+    expect(groups.get(1)).toEqual(['end'])
+    expect(groups.get(2)).toEqual(['begin'])
+  })
+
+  it('uses two beams for sixteenths', () => {
+    const notes: Note[] = Array.from({ length: 4 }, (_, i) => ({
+      ch: 'pulse1' as const, patch: 'x', t: i * 12, dur: 12, midi: 60,
+    }))
+    const slots = layOutMeasures(notes, bar, bar)[0]!
+    const groups = beamGroups(slots, 0, TPQ)
+    expect(groups.get(0)).toEqual(['begin', 'begin'])
+    expect(groups.get(3)).toEqual(['end', 'end'])
+  })
+
+  it('never beams a quarter note or a rest', () => {
+    const notes: Note[] = [{ ch: 'pulse1', patch: 'x', t: 0, dur: TPQ, midi: 60 }]
+    const slots = layOutMeasures(notes, bar, bar)[0]!
+    expect(beamGroups(slots, 0, TPQ).size).toBe(0)
+  })
+
+  it('leaves a lone eighth unbeamed', () => {
+    const notes: Note[] = [{ ch: 'pulse1', patch: 'x', t: 0, dur: 24, midi: 60 }]
+    const slots = layOutMeasures(notes, bar, bar)[0]!
+    expect(beamGroups(slots, 0, TPQ).size).toBe(0)
+  })
+
+  it('a real theme emits balanced begin/end beams', async () => {
+    const minted = await mintOnce('did:plc:4qsyxmnsblo4luuycm3572bq', 8)
+    const xml = encodeMusicXml(compose(minted.theme), { tonicPc: 0, scale: [0, 2, 3, 5, 7, 8, 10] })
+    const begins = (xml.match(/<beam number="1">begin<\/beam>/g) ?? []).length
+    const ends = (xml.match(/<beam number="1">end<\/beam>/g) ?? []).length
+    expect(begins).toBeGreaterThan(10)
+    expect(begins, 'every beam that begins must end').toBe(ends)
   })
 })

@@ -88,6 +88,8 @@
     .takeaway a { display:inline-block; padding:3px 9px; border:1px solid var(--border);
                   border-radius:999px; color:var(--cyan); cursor:pointer; text-decoration:none; }
     .takeaway a:hover { border-color:var(--cyan); background:rgba(86,201,214,.10); }
+    .takeaway a.lead { color:var(--amber); border-color:var(--amber); }
+    .takeaway a.lead:hover { background:rgba(255,209,102,.12); }
     .takeaway-hint { margin-top:6px; font-size:.74rem; color:var(--dim); line-height:1.4;
                      max-width:44ch; margin-left:auto; margin-right:auto; }
     #hear.playing { background:var(--green); }
@@ -179,6 +181,7 @@
         </div>
         <div class="traits" id="theme-traits"></div>
         <div class="takeaway">
+          <a id="theme-sheet" class="lead">♬ see the sheet music</a>
           <span>take it with you:</span>
           <a id="theme-dl">wav</a>
           <a id="theme-midi">midi</a>
@@ -186,8 +189,8 @@
           <a id="theme-sting">just the motif</a>
         </div>
         <div class="takeaway-hint">
-          midi opens in any DAW or tracker · musicxml engraves as sheet music in
-          MuseScore, Sibelius or Dorico
+          your theme engraved on a page you can send to anyone — or take the files:
+          midi opens in any DAW or tracker, musicxml in MuseScore, Sibelius or Dorico
         </div>
       </div>
 

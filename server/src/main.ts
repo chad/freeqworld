@@ -9,7 +9,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Town, type Connection } from './town'
-import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, stingerWav, themeScore, themeWav } from './share.ts'
+import { appPageWithOg, cardPng, checkFace, clipMp4, facePng, invitePage, inviteView, resolveIdentity, scorePage, stingerWav, themeScore, themeWav } from './share.ts'
 import type { FaceVariant } from './face.ts'
 import {
   completionsFromEvents, levelFor, QUEST_EVENT, QUEST_KINDS, standings, verifyQuestEvent,
@@ -350,6 +350,27 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     })
   }
 
+  // The engraver for /score/<who>. On pfp.freeq.at nginx serves this from the
+  // static root, but the score page is also reachable at /id/score/... and from
+  // a local dev server, where the root static handler is the WORLD client and
+  // would 404. One explicit route means the page works wherever it is served.
+  if (path === '/osmd.js' || path === '/id/osmd.js') {
+    try {
+      const body = await readFile(join(path.startsWith('/id/') ? PFP_DIST : PFP_DIST_ROOT, 'osmd.js'))
+      res.writeHead(200, {
+        'content-type': 'text/javascript; charset=utf-8',
+        'cache-control': 'public, max-age=604800, immutable',
+      })
+      res.end(body)
+    } catch {
+      // the page degrades to "the downloads still work", so say why in the log
+      console.warn('[score] osmd.js missing from the pfp build — run vite build pfp')
+      res.writeHead(404, { 'content-type': 'text/plain' })
+      res.end('engraver not built')
+    }
+    return
+  }
+
   // --- shareable identity pages -------------------------------------------
   // /u/<handle> unfurls as that person's character + tune (a static SPA can't:
   // crawlers don't run JS, so its OG tags can never vary per person).
@@ -372,7 +393,7 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
     return
   }
 
-  const shareMatch = /^\/(u|card|theme|stinger|clip|face)\/(.+)$/.exec(share)
+  const shareMatch = /^\/(u|card|theme|stinger|clip|face|score)\/(.+)$/.exec(share)
   // The app's own address bar is `?u=<handle>` (that's the URL a visitor copies
   // after following a share, or after looking someone up). Crawlers asking for
   // it must get THAT person's card, not the generic site one — so serve the
@@ -439,6 +460,12 @@ async function handleHttp(town: Town, req: IncomingMessage, res: ServerResponse)
           'x-freeq-cid': cid,
         })
         res.end(req.method === 'HEAD' ? undefined : png)
+        return
+      }
+      // the theme as engraved sheet music, with the downloads under it
+      if (kind === 'score') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' })
+        res.end(await scorePage(id, base))
         return
       }
       if (kind === 'clip') {
